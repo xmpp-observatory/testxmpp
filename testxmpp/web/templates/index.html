@@ -1,0 +1,9 @@
+<h1>It works!</h1>
+<form method="POST" action="{{ url_for('queue_scan') }}">
+	<div><label for="domain"><input type="text" name="domain" id="domain"></div>
+	<div><label for="protocol"><select id="protocol" name="protocol">
+		<option label="Client" value="c2s"/>
+		<option label="Server" value="s2s"/>
+	</select></div>
+	<div><button type="submit">Start scan</button></div>
+</form>

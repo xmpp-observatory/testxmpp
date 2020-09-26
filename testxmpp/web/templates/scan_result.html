@@ -1,0 +1,79 @@
+<h1>Scan result #{{ scan_id }}</h1>
+<dl>
+	<dt>Domain</dt>
+	<dd>{{ scan_info.domain }}</dd>
+	<dt>Start time</dt>
+	<dd>{{ scan_info.created_at }}</dd>
+	<dt>Protocol</dt>
+	<dd>{{ scan_info.protocol.value }}</dd>
+</dl>
+<h2>DNS</h2>
+<h3>SRV records</h3>
+<table>
+	<thead>
+		<tr>
+			<th>Service</th>
+			<th><abbr title="Priority">P</abbr></th>
+			<th><abbr title="Weight">W</abbr></th>
+			<th>Target</th>
+			<th>Port</th>
+		</tr>
+	</thead>
+	<tbody>
+{% for service, priority, weight, target, port in srv_records %}
+		<tr>
+			<td>{{ service }}</td>
+			<td>{{ priority }}</td>
+			<td>{{ weight }}</td>
+			<td>{{ target }}</td>
+			<td>{{ port }}</td>
+		</tr>
+{% endfor %}
+	</tbody>
+</table>
+
+<h2>TLS</h2>
+{% if tls_pending %}<p><strong>Note:</strong> Scan still in progress</p>{% endif %}
+{% if scan_info.host %}
+<p>Scan is executed against {{ scan_info.host }}:{{ scan_info.port }} using {{ scan_info.tls_mode }}.</p>
+{% endif %}
+<h3>Versions</h3>
+<table>
+	<thead>
+		<tr>
+			<th>Version</th>
+			<th>Offered</th>
+		</tr>
+	</thead>
+	<tbody>
+{% for label, score, offered in tls_offering_info %}
+		<tr>
+			<td>{{ label }}</td>
+			<td>{% if offered is none %}?{% else %}{{ 'yes' if offered else 'no'}}{% endif %}</td>
+		</tr>
+{% endfor %}
+	</tbody>
+</table>
+<h3>Ciphers</h3>
+<dl>
+	<dt>Cipher order</dt>
+	<dd>{% if server_cipher_order is none %}?{% elif server_cipher_order %}Server side{% else %}Client side{% endif %}</dd>
+</dl>
+<table>
+	<thead>
+		<tr>
+			<th>ID</th>
+			<th>Name</th>
+			<th>Info</th>
+		</tr>
+	</thead>
+	<tbody>
+{% for id_, name, info in ciphers %}
+		<tr>
+			<td>{{ id_ }}</td>
+			<td>{{ name }}</td>
+			<td>{{ info }}</td>
+		</tr>
+{% endfor %}
+	</tbody>
+</table>

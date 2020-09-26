@@ -1,1 +1,6 @@
 __pycache__
+/.local
+/.direnv
+/alembic.ini
+/test.sqlite
+/*.egg-info
