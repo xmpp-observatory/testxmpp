@@ -4,3 +4,4 @@ __pycache__
 /alembic.ini
 /test.sqlite
 /*.egg-info
+/dist

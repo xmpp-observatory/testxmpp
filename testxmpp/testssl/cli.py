@@ -1,15 +1,18 @@
 import argparse
 import asyncio
 import logging
+import os
 import pathlib
+import shlex
 
 import toml
 
 from .daemon import TestSSLWorker
 
 
-async def amain(config):
-    coordinator = TestSSLWorker(config)
+async def amain(coordinator_uri, testssl_argv_base, openssl_path):
+    coordinator = TestSSLWorker(coordinator_uri, testssl_argv_base,
+                                openssl_path)
     await coordinator.run()
 
 
@@ -30,12 +33,6 @@ def main():
         default=False,
         help="If enabled, verbosity will also be increased for libraries",
     )
-    parser.add_argument(
-        "-c", "--config-file",
-        default=pathlib.Path("/etc/testxmpp/testssl_worker.toml"),
-        type=pathlib.Path,
-        help="Path to configuration file",
-    )
 
     args = parser.parse_args()
 
@@ -49,11 +46,22 @@ def main():
     else:
         global_level = logging.WARNING
 
-
     logging.basicConfig(level=global_level)
     logging.getLogger("testxmpp").setLevel(verbosity_level)
 
-    with args.config_file.open("r") as f:
-        config = toml.load(f)
+    coordinator_uri = os.environ.get(
+        "TESTXMPP_COORDINATOR_URI",
+        "tcp://localhost:5001",
+    )
 
-    asyncio.run(amain(config))
+    testssl_argv_base = shlex.split(os.environ.get(
+        "TESTXMPP_TESTSSL",
+        "testssl",
+    ))
+
+    openssl_path = os.environ.get(
+        "TESTXMPP_OPENSSL_PATH",
+        "/usr/bin/openssl",
+    )
+
+    asyncio.run(amain(coordinator_uri, testssl_argv_base, openssl_path))

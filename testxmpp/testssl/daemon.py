@@ -11,8 +11,6 @@ import zmq.asyncio
 
 import testxmpp.api.coordinator as coordinator_api
 
-from .config import schema as config_schema
-
 
 logger = logging.getLogger(__name__)
 
@@ -194,13 +192,16 @@ async def run_testssl(testssl, domain, hostname, port, starttls):
 
 
 class TestSSLWorker:
-    def __init__(self, config):
+    def __init__(self, coordinator_uri, testssl_argv_base,
+                 openssl_path):
         super().__init__()
-        config = config_schema.validate(config)
-        self._coordinator_url = config["zmq"]["coordinator_url"]
-        self._max_parallelism = config["scan"]["parallelism"]
-        self._testssl_argv_base = config["scan"]["testssl"]
+        self._coordinator_uri = coordinator_uri
+        self._testssl_argv_base = testssl_argv_base + [
+            "--openssl", openssl_path,
+        ]
         self._worker_id = secrets.token_hex(16)
+        logger.debug("I am %s", self._worker_id)
+        logger.debug("I will use %r", self._testssl_argv_base)
 
         self._zctx = zmq.asyncio.Context()
 
@@ -329,8 +330,8 @@ class TestSSLWorker:
         coordinator_sock = self._zctx.socket(zmq.REQ)
         try:
             logger.debug("talking to coordinator at %r",
-                         self._coordinator_url)
-            coordinator_sock.connect(self._coordinator_url)
+                         self._coordinator_uri)
+            coordinator_sock.connect(self._coordinator_uri)
             while True:
                 try:
                     sleep_interval = await self._get_and_run_job(

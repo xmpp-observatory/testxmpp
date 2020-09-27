@@ -19,7 +19,6 @@ import testxmpp.api.common as common_api
 import testxmpp.api.coordinator as coordinator_api
 
 from . import tasks
-from .config import schema as config_schema
 
 
 logger = logging.getLogger(__name__)
@@ -602,13 +601,12 @@ class CoordinatorRequestProcessor(RequestProcessor):
 
 
 class Coordinator:
-    def __init__(self, config):
+    def __init__(self, db_uri, listen_uri):
         super().__init__()
-        config = config_schema.validate(config)
-        self._db_uri = config["database"]["uri"]
+        self._db_uri = db_uri
         self._engine = model.get_generic_engine(self._db_uri)
         self._sessionmaker = sqlalchemy.orm.sessionmaker(bind=self._engine)
-        self._listen_url = config["zmq"]["listen_url"]
+        self._listen_uri = listen_uri
         self._zctx = zmq.asyncio.Context()
         self._task_queue = tasks.TaskQueue()
         self._processor = CoordinatorRequestProcessor(
@@ -633,7 +631,7 @@ class Coordinator:
         try:
             sock = self._zctx.socket(zmq.REP)
             try:
-                sock.bind(self._listen_url)
+                sock.bind(self._listen_uri)
                 await self._processor.run(sock)
             finally:
                 sock.close()

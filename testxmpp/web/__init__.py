@@ -1,4 +1,5 @@
 import logging
+import os
 
 import quart.flask_patch
 import quart.logging
@@ -20,7 +21,10 @@ import testxmpp.api.coordinator as coordinator_api
 
 
 app = Quart(__name__)
-app.config.from_envvar("TESTXMPP_WEB_CONFIG")
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+app.config["SQLALCHEMY_DATABASE_URI"] = os.environ["TESTXMPP_DB_URI"]
+app.config["COORDINATOR_URI"] = os.environ.get("TESTXMPP_COORDINATOR_URI",
+                                               "tcp://localhost:5001")
 
 db = SQLAlchemy(app, metadata=model.Base.metadata)
 
