@@ -5,9 +5,15 @@ import os
 import pathlib
 import sys
 
-import toml
+import environ
 
 from .daemon import Coordinator
+
+
+@environ.config(prefix="TESTXMPP")
+class AppConfig:
+    db_uri = environ.var()
+    listen_uri = environ.var("tcp://*:5001")
 
 
 async def amain(db_uri, listen_uri):
@@ -48,15 +54,5 @@ def main():
     logging.basicConfig(level=global_level)
     logging.getLogger("testxmpp").setLevel(verbosity_level)
 
-    try:
-        db_uri = os.environ["TESTXMPP_DB_URI"]
-        listen_uri = os.environ.get(
-            "TESTXMPP_LISTEN_URI",
-            "tcp://*:5001"
-        )
-    except KeyError as exc:
-        logging.error("environment variable %s must be set", exc)
-        sys.exit(2)
-        return 2
-
-    asyncio.run(amain(db_uri, listen_uri))
+    config = environ.to_config(AppConfig)
+    asyncio.run(amain(config.db_uri, config.listen_uri))

@@ -5,9 +5,16 @@ import os
 import pathlib
 import shlex
 
-import toml
+import environ
 
 from .daemon import TestSSLWorker
+
+
+@environ.config(prefix="TESTXMPP")
+class AppConfig:
+    coordinator_uri = environ.var("tcp://localhost:5001")
+    testssl = environ.var("testssl", converter=shlex.split)
+    openssl_path = environ.var("/usr/bin/openssl")
 
 
 async def amain(coordinator_uri, testssl_argv_base, openssl_path):
@@ -49,19 +56,7 @@ def main():
     logging.basicConfig(level=global_level)
     logging.getLogger("testxmpp").setLevel(verbosity_level)
 
-    coordinator_uri = os.environ.get(
-        "TESTXMPP_COORDINATOR_URI",
-        "tcp://localhost:5001",
-    )
-
-    testssl_argv_base = shlex.split(os.environ.get(
-        "TESTXMPP_TESTSSL",
-        "testssl",
-    ))
-
-    openssl_path = os.environ.get(
-        "TESTXMPP_OPENSSL_PATH",
-        "/usr/bin/openssl",
-    )
-
-    asyncio.run(amain(coordinator_uri, testssl_argv_base, openssl_path))
+    config = environ.to_config(AppConfig)
+    asyncio.run(amain(config.coordinator_uri,
+                      config.testssl,
+                      config.openssl_path))
