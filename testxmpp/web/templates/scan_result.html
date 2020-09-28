@@ -1,18 +1,28 @@
+{% extends "_base.html" %}
+{% block body %}
 <h1>Scan result #{{ scan_id }}</h1>
 <dl>
-	<dt>Domain</dt>
-	<dd>{{ scan_info.domain }}</dd>
-	<dt>Start time</dt>
-	<dd>{{ scan_info.created_at }}</dd>
-	<dt>Protocol</dt>
-	<dd>{{ scan_info.protocol.value }}</dd>
+	<div class="di">
+		<dt>Domain</dt>
+		<dd>{{ scan_info.domain }}</dd>
+	</div>
+	<div class="di">
+		<dt>Start time</dt>
+		<dd>{{ scan_info.created_at }}</dd>
+	</div>
+	<div class="di">
+		<dt>Protocol</dt>
+		<dd>{{ scan_info.protocol.value }}</dd>
+	</div>
 </dl>
 <h2>DNS</h2>
 <h3>SRV records</h3>
-<table>
+{% for service, records in srv_records | dictsort %}
+<h4>{{ service }}</h4>
+<table class="wide{% if records | length > 3 %} long{% endif %}">
+	<col class="numeric">
 	<thead>
 		<tr>
-			<th>Service</th>
 			<th><abbr title="Priority">P</abbr></th>
 			<th><abbr title="Weight">W</abbr></th>
 			<th>Target</th>
@@ -20,9 +30,8 @@
 		</tr>
 	</thead>
 	<tbody>
-{% for service, priority, weight, target, port in srv_records %}
+{% for priority, weight, target, port in records %}
 		<tr>
-			<td>{{ service }}</td>
 			<td>{{ priority }}</td>
 			<td>{{ weight }}</td>
 			<td>{{ target }}</td>
@@ -31,6 +40,7 @@
 {% endfor %}
 	</tbody>
 </table>
+{% endfor %}
 
 <h2>TLS</h2>
 {% if tls_pending %}<p><strong>Note:</strong> Scan still in progress</p>{% endif %}
@@ -59,10 +69,9 @@
 	<dt>Cipher order</dt>
 	<dd>{% if server_cipher_order is none %}?{% elif server_cipher_order %}Server side{% else %}Client side{% endif %}</dd>
 </dl>
-<table>
+<table class="wide{% if ciphers | length > 3 %} long{% endif %}">
 	<thead>
 		<tr>
-			<th>ID</th>
 			<th>Name</th>
 			<th>Info</th>
 		</tr>
@@ -70,10 +79,10 @@
 	<tbody>
 {% for id_, name, info in ciphers %}
 		<tr>
-			<td>{{ id_ }}</td>
-			<td>{{ name }}</td>
+			<td>{{ name }}<span class="cipher-id"> (<code>{{ "0x%02x" | format(id_) }}</code>)</span></td>
 			<td>{{ info }}</td>
 		</tr>
 {% endfor %}
 	</tbody>
 </table>
+{% endblock %}

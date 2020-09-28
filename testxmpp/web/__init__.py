@@ -112,21 +112,22 @@ async def scan_result(scan_id):
         for (label, scores), offered in zip(tls_offering_schema, tls_versions)
     ]
 
-    srv_records = [
-        (service, priority, weight, host.decode("idna"), port)
-        for service, priority, weight, host, port in db.session.query(
-            model.SRVRecord.service,
-            model.SRVRecord.priority,
-            model.SRVRecord.weight,
-            model.SRVRecord.host,
-            model.SRVRecord.port,
-        ).filter(
-            model.SRVRecord.scan_id == scan_id,
-        ).order_by(
-            model.SRVRecord.priority.asc(),
-            model.SRVRecord.weight.desc(),
+    srv_records = {}
+    for service, priority, weight, host, port in db.session.query(
+                model.SRVRecord.service,
+                model.SRVRecord.priority,
+                model.SRVRecord.weight,
+                model.SRVRecord.host,
+                model.SRVRecord.port,
+            ).filter(
+                model.SRVRecord.scan_id == scan_id,
+            ).order_by(
+                model.SRVRecord.priority.asc(),
+                model.SRVRecord.weight.desc(),
+            ):
+        srv_records.setdefault(service, []).append(
+            (priority, weight, host.decode("idna"), port)
         )
-    ]
 
     ciphers = list(db.session.query(
         model.CipherOffering.cipher_id,

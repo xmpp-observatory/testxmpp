@@ -1,1 +1,2 @@
 recursive-include testxmpp/web/templates *.html
+recursive-include testxmpp/web/static/css *.css

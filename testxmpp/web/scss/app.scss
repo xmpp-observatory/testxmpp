@@ -1,0 +1,79 @@
+@import "_theme.scss";
+@import "_baseline.scss";
+
+
+body {
+	margin: 0;
+	margin-left: auto;
+	margin-right: auto;
+	max-width: 60rem;
+	padding: 0;
+	background-color: $gray-900;
+}
+
+
+/* table foo */
+
+table {
+	border-collapse: collapse;
+}
+
+table td, table th {
+	padding: $w-s1;
+	border: $w-s5 solid $primary-300;
+}
+
+table.wide {
+	width: 100%;
+}
+
+table.long tr {
+	background-color: $gray-900;
+}
+
+table.long tr:nth-child(2n) {
+	background-color: $primary-900;
+	color: $primary-100;
+}
+
+table th {
+	background-color: $primary-800;
+	color: black;
+}
+
+col.numeric {
+	text-align: right;
+}
+
+/* grid dl */
+
+dl {
+	display: table;
+}
+
+dl div.di {
+	display: table-row;
+}
+
+dt, dd {
+	display: table-cell;
+}
+
+dt {
+	padding: $w-s1;
+	padding-left: 0;
+	font-weight: bold;
+}
+
+dd {
+	padding: $w-s1;
+	padding-right: 0;
+}
+
+/* misc */
+
+span.cipher-id {
+	font-size: $w-s1;
+	font-weight: light;
+	color: $gray-300;
+}

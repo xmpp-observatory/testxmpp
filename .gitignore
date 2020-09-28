@@ -5,3 +5,4 @@ __pycache__
 /test.sqlite
 /*.egg-info
 /dist
+/testxmpp/web/static/css

@@ -1,0 +1,61 @@
+html {
+	font-size: 100%;
+}
+
+body {
+	font-family: $font-sans;
+	color: $gray-100;
+}
+
+p {
+	line-height: 1.5;
+	margin: 1.5em 0;
+	font-family: $font-bulk;
+	color: inherit;
+}
+
+h1, h2, h3, h4, h5, h6 {
+	/* normalise */
+	font-weight: 400;
+	text-decoration: none;
+	font-style: normal;
+	font-family: $font-heading;
+	color: black;
+}
+
+input, button, label, select, textarea, pre, code {
+	font-size: 100%;
+	color: inherit;
+	line-height: 1.5;
+}
+
+textarea {
+	font-family: $font-bulk;
+}
+
+option {
+	padding: 0;
+	margin: 0;
+}
+
+@for $n from 1 through 6 {
+	h#{$n} {
+		font-size: nth($h-sizes, $n);
+		line-height: 1.5 / (nth($h-sizes, $n) / 100%);
+		margin: 1.5em / (nth($h-sizes, $n) / 100%) 0;
+	}
+}
+
+h6 {
+	font-weight: bold;
+}
+
+@media screen and (max-width: $small-screen-threshold) {
+	@for $n from 1 through 6 {
+		h#{$n} {
+			font-size: nth($h-small-sizes, $n);
+			line-height: 1.5 / (nth($h-small-sizes, $n) / 100%);
+			margin: 1.5em / (nth($h-small-sizes, $n) / 100%) 0;
+		}
+	}
+}
