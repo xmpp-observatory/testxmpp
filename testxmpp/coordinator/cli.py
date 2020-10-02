@@ -16,8 +16,8 @@ class AppConfig:
     listen_uri = environ.var("tcp://*:5001")
 
 
-async def amain(db_uri, listen_uri):
-    coordinator = Coordinator(db_uri, listen_uri)
+async def amain(config):
+    coordinator = Coordinator(config)
     await coordinator.run()
 
 
@@ -55,4 +55,4 @@ def main():
     logging.getLogger("testxmpp").setLevel(verbosity_level)
 
     config = environ.to_config(AppConfig)
-    asyncio.run(amain(config.db_uri, config.listen_uri))
+    asyncio.run(amain(config))

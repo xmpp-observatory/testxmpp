@@ -601,12 +601,12 @@ class CoordinatorRequestProcessor(RequestProcessor):
 
 
 class Coordinator:
-    def __init__(self, db_uri, listen_uri):
+    def __init__(self, config):
         super().__init__()
-        self._db_uri = db_uri
+        self._db_uri = config.db_uri
         self._engine = model.get_generic_engine(self._db_uri)
         self._sessionmaker = sqlalchemy.orm.sessionmaker(bind=self._engine)
-        self._listen_uri = listen_uri
+        self._listen_uri = config.listen_uri
         self._zctx = zmq.asyncio.Context()
         self._task_queue = tasks.TaskQueue()
         self._processor = CoordinatorRequestProcessor(
