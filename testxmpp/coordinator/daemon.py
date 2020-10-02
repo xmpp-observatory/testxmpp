@@ -518,6 +518,7 @@ class CoordinatorRequestProcessor(RequestProcessor):
                 scan.created_at = now
                 scan.protocol = model.ScanType(msg["payload"]["protocol"])
                 scan.state = model.ScanState.IN_PROGRESS
+                scan.privileged = False
                 session.add(scan)
 
                 ep_task = model.PendingScanTask()

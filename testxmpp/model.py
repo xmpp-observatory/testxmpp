@@ -192,6 +192,12 @@ class Scan(Base):
         nullable=True,
     )
 
+    privileged = Column(
+        "privileged",
+        Boolean(),
+        nullable=False,
+    )
+
 
 class TLSOffering(Base):
     __tablename__ = "tls_offering"
