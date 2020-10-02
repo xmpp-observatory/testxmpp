@@ -10,10 +10,22 @@ import environ
 from .daemon import Coordinator
 
 
+@environ.config
+class Ratelimit:
+    burst = environ.var(6, converter=int)
+    interval = environ.var(3600, converter=int)
+
+
 @environ.config(prefix="TESTXMPP")
 class AppConfig:
     db_uri = environ.var()
     listen_uri = environ.var("tcp://*:5001")
+
+    @environ.config
+    class Unprivileged:
+        ratelimit = environ.group(Ratelimit)
+
+    unprivileged = environ.group(Unprivileged)
 
 
 async def amain(config):

@@ -138,7 +138,11 @@ async def gather_srv_records(domain, services):
 
 
 class CoordinatorRequestProcessor(RequestProcessor):
-    def __init__(self, logger, task_queue, sessionmaker):
+    def __init__(self,
+                 logger,
+                 task_queue,
+                 sessionmaker,
+                 scan_ratelimit_unprivileged):
         super().__init__(
             coordinator_api.api_request,
             coordinator_api.api_response,
@@ -153,6 +157,7 @@ class CoordinatorRequestProcessor(RequestProcessor):
         )
         self._task_queue = task_queue
         self._sessionmaker = sessionmaker
+        self._scan_ratelimit_unprivileged = scan_ratelimit_unprivileged
 
     async def _discover_endpoints(self, task_id):
         with model.session_scope(self._sessionmaker) as session:
@@ -486,11 +491,31 @@ class CoordinatorRequestProcessor(RequestProcessor):
             )
 
         elif msg["type"] == coordinator_api.RequestType.SCAN_DOMAIN.value:
+            now = datetime.utcnow()
+            cutoff = (
+                now - timedelta(
+                    seconds=self._scan_ratelimit_unprivileged.interval
+                )
+            )
             with model.session_scope(self._sessionmaker) as session:
+                nscans = session.query(model.Scan.created_at).filter(
+                    model.Scan.created_at >= cutoff,
+                ).limit(
+                    self._scan_ratelimit_unprivileged.burst
+                ).count()
+                if nscans >= self._scan_ratelimit_unprivileged.burst:
+                    return coordinator_api.mkv1response(
+                        coordinator_api.ResponseType.ERROR,
+                        common_api.mkerror(
+                            common_api.ErrorCode.TOO_MANY_REQUESTS,
+                            "unprivileged rate limit hit",
+                        )
+                    )
+
                 scan = model.Scan()
                 # TODO: IDNA and stuff
                 scan.domain = msg["payload"]["domain"].encode("utf-8")
-                scan.created_at = datetime.utcnow()
+                scan.created_at = now
                 scan.protocol = model.ScanType(msg["payload"]["protocol"])
                 scan.state = model.ScanState.IN_PROGRESS
                 session.add(scan)
@@ -603,8 +628,7 @@ class CoordinatorRequestProcessor(RequestProcessor):
 class Coordinator:
     def __init__(self, config):
         super().__init__()
-        self._db_uri = config.db_uri
-        self._engine = model.get_generic_engine(self._db_uri)
+        self._engine = model.get_generic_engine(config.db_uri)
         self._sessionmaker = sqlalchemy.orm.sessionmaker(bind=self._engine)
         self._listen_uri = config.listen_uri
         self._zctx = zmq.asyncio.Context()
@@ -613,6 +637,7 @@ class Coordinator:
             logger,
             self._task_queue,
             self._sessionmaker,
+            config.unprivileged.ratelimit,
         )
 
     def _collect_tasks(self):

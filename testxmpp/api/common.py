@@ -5,6 +5,7 @@ from schema import Schema, Or
 
 class ErrorCode(enum.Enum):
     BAD_REQUEST = 400
+    TOO_MANY_REQUESTS = 429
 
     INTERNAL_ERROR = 500
 
