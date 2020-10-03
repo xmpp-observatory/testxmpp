@@ -1,12 +1,24 @@
 {% extends "_base.html" %}
 {% block body %}
-<h1>It works!</h1>
-<form method="POST" action="{{ url_for('queue_scan') }}">
-	<div><label for="domain"><input type="text" name="domain" id="domain"></div>
-	<div><label for="protocol"><select id="protocol" name="protocol">
-		<option label="Client" value="c2s"/>
-		<option label="Server" value="s2s"/>
-	</select></div>
-	<div><button type="submit">Start scan</button></div>
-</form>
+<div id="topbar">
+	<header><a href="{{ url_for('main.index') }}"><span>{% trans %}IM Observatory{% endtrans %}</span></a></header>
+	<nav class="mainmenu"></nav>
+</div>
+<header class="mainpage">
+	<h1>{% trans %}IM Observatory{% endtrans %}</h1>
+	<p>{% trans %}Testing the security of the Jabber/XMPP network since '13.{% endtrans %}</p>
+</header>
+<div class="cards">
+	<div class="card">
+		<h2>{% trans %}Test a server{% endtrans %}</h2>
+		<form class="quickscan" method="POST" action="{{ url_for('main.queue_scan') }}">
+			<div><label for="domain">Domain</label><input type="text" name="domain" id="domain" placeholder="jabber.org"></div>
+			<div><label for="protocol">Protocol</label><select id="protocol" name="protocol">
+				<option label="Client" value="c2s"/>
+				<option label="Server" value="s2s"/>
+			</select></div>
+			<div><button type="submit">Start scan</button></div>
+		</form>
+	</div>
+</div>
 {% endblock %}
