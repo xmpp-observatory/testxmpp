@@ -8,6 +8,8 @@ import quart.logging
 
 from quart import Quart
 
+import flask_babel
+
 from .infra import db, babel
 from .main import bp as bp_main
 
@@ -31,5 +33,9 @@ def create_app():
     babel.init_app(app)
 
     app.register_blueprint(bp_main)
+
+    @app.template_filter(name="format_timedelta")
+    def format_timedelta(dt, **kwargs):
+        return flask_babel.format_timedelta(dt, **kwargs)
 
     return app

@@ -14,7 +14,7 @@ body {
 
 /* table foo */
 
-table {
+/* table {
 	border-collapse: collapse;
 }
 
@@ -43,6 +43,26 @@ table th {
 
 col.numeric {
 	text-align: right;
+} */
+
+table {
+	border-collapse: collapse;
+}
+
+table td, table th {
+	padding: $w-s1;
+}
+
+table.wide {
+	width: 100%;
+}
+
+table th {
+	border-bottom: $w-s5 solid $primary-100;
+}
+
+td.numeric {
+	text-align: right;
 }
 
 /* grid dl */
@@ -70,10 +90,55 @@ dd {
 	padding-right: 0;
 }
 
+/* main page cards and quick scan form */
+
+form.quickscan {
+	display: table;
+}
+
+form.quickscan > div {
+	display: table-row;
+}
+
+form.quickscan > div > * {
+	display: table-cell;
+}
+
+form.quickscan > div > * {
+	margin: 0.75em;
+}
+
+/* recent results */
+
+div.recent-scans-wrap {
+	display: flex;
+	flex-wrap: wrap;
+}
+
+div.recent-scans-col {
+	flex: 1 0 auto;
+	margin: $w-s1;
+	padding: $w-s1;
+}
+
 /* misc */
 
 span.cipher-id {
 	font-size: $w-s1;
 	font-weight: light;
 	color: $gray-300;
+}
+
+/* a11y things */
+
+.a11y-text {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  top: -100px;
+}
+
+.pres-text:before {
+  content: attr(data-text);
 }

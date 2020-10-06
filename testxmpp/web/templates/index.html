@@ -1,4 +1,5 @@
 {% extends "_base.html" %}
+{% from "_library.html" import protocol_name_short, protocol_name %}
 {% block body %}
 <div id="topbar">
 	<header><a href="{{ url_for('main.index') }}"><span>{% trans %}IM Observatory{% endtrans %}</span></a></header>
@@ -14,11 +15,39 @@
 		<form class="quickscan" method="POST" action="{{ url_for('main.queue_scan') }}">
 			<div><label for="domain">Domain</label><input type="text" name="domain" id="domain" placeholder="jabber.org"></div>
 			<div><label for="protocol">Protocol</label><select id="protocol" name="protocol">
-				<option label="Client" value="c2s"/>
-				<option label="Server" value="s2s"/>
+				<option label="Client-to-Server" value="c2s"/>
+				<option label="Server-to-Server" value="s2s"/>
 			</select></div>
-			<div><button type="submit">Start scan</button></div>
+			<div><span></span><button type="submit">Start scan</button></div>
 		</form>
+	</div>
+	<div class="card">
+		<h2>{% trans %}Recent scans{% endtrans %}</h2>
+		<div class="recent-scans-wrap">
+			{% for protocol, scans in recent_scans %}
+			<div class="recent-scans-col">
+				<h3>{{ protocol_name(protocol).title() }}</h3>
+				<table class="wide">
+					<thead>
+						<tr>
+							<th>{% trans %}Domain{% endtrans %}</th>
+							<th>{% trans %}When{% endtrans %}</th>
+							<th>{% trans %}Score{% endtrans %}</th>
+						</tr>
+					</thead>
+					<tbody>
+						{% for id_, domain, created_at in scans %}
+						<tr>
+							<td><a href="{{ url_for('main.scan_result', scan_id=id_) }}">{{ domain }}</a></td>
+							<td>{{ (created_at - now) | format_timedelta(add_direction=True) }}</td>
+							<td class="numeric">TBD</td>
+						<tr>
+						{% endfor %}
+					</tbody>
+				</table>
+			</div>
+			{% endfor %}
+		</div>
 	</div>
 </div>
 {% endblock %}

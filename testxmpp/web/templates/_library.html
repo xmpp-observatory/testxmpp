@@ -1,0 +1,15 @@
+{% macro protocol_name_short(protocol) -%}
+{%- if protocol.value == "c2s" -%}
+{%- trans %}client{% endtrans -%}
+{%- else -%}
+{%- trans %}server{% endtrans -%}
+{%- endif -%}
+{%- endmacro %}
+
+{% macro protocol_name(protocol) -%}
+{%- if protocol.value == "c2s" -%}
+{% trans %}client-to-server{% endtrans %}
+{%- else -%}
+{% trans %}server-to-server{% endtrans %}
+{%- endif -%}
+{%- endmacro %}

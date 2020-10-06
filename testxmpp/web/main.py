@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from quart import (
     Blueprint,
     render_template,
@@ -12,18 +14,59 @@ import sqlalchemy
 import sqlalchemy.orm
 
 import zmq
-import zmq.asyncio
 
 import testxmpp.api.coordinator as coordinator_api
 from testxmpp import model
-from .infra import db
+from .infra import db, zmq_socket
 
 bp = Blueprint('main', __name__)
 
 
+def _get_recent_scans(protocol):
+    subquery = db.session.query(
+        model.Scan.domain,
+        sqlalchemy.func.max_(model.Scan.created_at).label("newest"),
+    ).group_by(
+        model.Scan.domain,
+    ).filter(
+        model.Scan.protocol == protocol,
+    ).limit(10).subquery()
+
+    return [
+        (id_, domain.decode("idna"), created_at)
+        for id_, domain, created_at in db.session.query(
+            model.Scan.id_,
+            model.Scan.domain,
+            model.Scan.created_at,
+        ).select_from(
+            model.Scan,
+        ).join(
+            subquery,
+            sqlalchemy.and_(
+                subquery.c.domain == model.Scan.domain,
+                subquery.c.newest == model.Scan.created_at,
+            ),
+        ).filter(
+            model.Scan.protocol == protocol,
+        ).order_by(
+            model.Scan.created_at.desc(),
+        ).limit(10)
+    ]
+
+
 @bp.route("/", methods=["GET"])
 async def index():
-    return await render_template("index.html")
+    recent_scans_c2s = _get_recent_scans(model.ScanType.C2S)
+    recent_scans_s2s = _get_recent_scans(model.ScanType.S2S)
+
+    return await render_template(
+        "index.html",
+        recent_scans=[
+            (model.ScanType.C2S, recent_scans_c2s),
+            (model.ScanType.S2S, recent_scans_s2s),
+        ],
+        now=datetime.utcnow(),
+    )
 
 
 @bp.route("/scan/queue", methods=["GET", "POST"])
@@ -37,14 +80,10 @@ async def queue_scan():
         },
     )
 
-    zctx = zmq.asyncio.Context()
-    sock = zctx.socket(zmq.REQ)
-    try:
+    with zmq_socket(zmq.REQ) as sock:
         sock.connect(current_app.config["COORDINATOR_URI"])
         await sock.send_json(scan_request)
         reply = await sock.recv_json()
-    finally:
-        sock.close()
 
     if reply["type"] == coordinator_api.ResponseType.SCAN_QUEUED.value:
         return redirect(url_for(
