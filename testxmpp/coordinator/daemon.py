@@ -1,9 +1,12 @@
 import asyncio
+import json
 import logging
 import random
-import schema
+import typing
 
 from datetime import datetime, timedelta
+
+import schema
 
 import dns.resolver
 
@@ -11,6 +14,8 @@ import sqlalchemy.orm
 
 import zmq
 import zmq.asyncio
+
+import aioxmpp
 
 from testxmpp import model
 from testxmpp.common import RequestProcessor
@@ -137,6 +142,75 @@ async def gather_srv_records(domain, services):
             yield (service, record)
 
 
+def normalize_domain(domain: str) -> bytes:
+    """
+    Normalize and encode a string containing a domain name for matching
+    and storage purposes.
+
+    :param domain: A string containing a domain name, either in unicode or in
+        IDNA form.
+    :type domain: :class:`str`
+    :raise ValueError: if `domain` has leading dots.
+    :return: The normalised and encoded domain name.
+    :rtype: :class:`bytes`
+
+    Given `domain`, any trailing dots are removed. If the string contains an
+    IDNA encoded domain name, it is decoded first. The string is then
+    normalised using nameprep and afterwards properly encoded as IDNA into a
+    :class:`bytes` object.
+
+    Note that even though the `domain` may be IDNA encoded, it must be a
+    :class:`str`.
+    """
+
+    domain = domain.rstrip(".")
+    if domain.startswith("."):
+        raise ValueError("domain name must not start with a dot")
+
+    # We want to reverse a possible IDNA encoding.
+    try:
+        # For this, we first check (the hard way) whether the string contains
+        # any non-ascii stuff.
+        domain_bytes = domain.encode("ascii")
+    except UnicodeEncodeError:
+        # If it contains non-ascii stuff, that’s ok -- it clearly is not IDNA
+        # encoded.
+        pass
+    else:
+        # Otherwise, let us try to IDNA-decode it to revert it to its unicode
+        # form.
+        domain = domain_bytes.decode("idna")
+
+    # Now we run stringprep on it and re-encode it as IDNA.
+    return aioxmpp.stringprep.nameprep(domain).encode("idna")
+
+
+def get_or_create_sasl_mechanism(session, name: str):
+    try:
+        return session.query(model.SASLMechanism).filter(
+            model.SASLMechanism.name == name,
+        ).one()
+    except sqlalchemy.orm.exc.NoResultFound:
+        mech = model.SASLMechanism()
+        mech.name = name
+        session.add(mech)
+        return mech
+
+
+def add_sasl_mechanisms(session,
+                        phase: model.ConnectionPhase,
+                        mechanisms: typing.List[str],
+                        result: model.EndpointScanResult):
+    for mech in mechanisms:
+        entry = model.EndpointScanSASLOffering()
+        entry.endpoint_scan_result = result
+        entry.phase = phase
+        entry.sasl_mechanism = get_or_create_sasl_mechanism(
+            session, mech,
+        )
+        session.add(entry)
+
+
 class CoordinatorRequestProcessor(RequestProcessor):
     def __init__(self,
                  logger,
@@ -236,6 +310,41 @@ class CoordinatorRequestProcessor(RequestProcessor):
             tls_task.type_ = model.TaskType.TLS_SCAN
             tls_task.parameters = '{}'
             session.add(tls_task)
+
+            probe_task = model.PendingScanTask()
+            probe_task.scan_id = scan_id
+            probe_task.type_ = model.TaskType.XMPP_PROBE
+            probe_task.parameters = json.dumps(
+                {
+                    "hostname": scan_domain.decode("ascii"),
+                    "port": {
+                        model.ScanType.C2S: 5222,
+                        model.ScanType.S2S: 5269,
+                    }[scan_protocol],
+                    "tls_mode": "starttls",
+                    "protocol": scan_protocol.value,
+                }
+            )
+            session.add(probe_task)
+
+            for db_record in db_records:
+                probe_task = model.PendingScanTask()
+                probe_task.scan_id = scan_id
+                probe_task.type_ = model.TaskType.XMPP_PROBE
+                probe_task.parameters = json.dumps(
+                    {
+                        "hostname": db_record.host.decode("ascii"),
+                        "port": db_record.port,
+                        "tls_mode": {
+                            "xmpp-client": "starttls",
+                            "xmpp-server": "starttls",
+                            "xmpps-client": "direct",
+                            "xmpps-server": "direct",
+                        }[db_record.service],
+                        "protocol": scan_protocol.value,
+                    }
+                )
+                session.add(probe_task)
 
             session.commit()
 
@@ -483,7 +592,60 @@ class CoordinatorRequestProcessor(RequestProcessor):
             session.delete(task)
             session.commit()
 
+    async def _handle_xmpp_result(self, worker_id, job_id, result):
+        with model.session_scope(self._sessionmaker) as session:
+            try:
+                task = session.query(model.PendingScanTask).filter(
+                    model.PendingScanTask.id_ == job_id,
+                ).one()
+            except sqlalchemy.orm.exc.NoResultFound:
+                return False
+
+            if task.assigned_worker != worker_id:
+                # late worker?
+                return False
+
+            session.delete(task)
+
+            parameters = json.loads(task.parameters)
+
+            scan_id = task.scan_id
+            endpoint_result = model.EndpointScanResult()
+            endpoint_result.scan_id = scan_id
+            endpoint_result.hostname = parameters["hostname"].encode("ascii")
+            endpoint_result.port = parameters["port"]
+            endpoint_result.tls_mode = model.TLSMode(parameters["tls_mode"])
+            endpoint_result.tls_offered = result["tls_offered"]
+            endpoint_result.tls_negotiated = result["tls_negotiated"]
+            endpoint_result.error = result["error"]
+            endpoint_result.errno = result["errno"]
+            session.add(endpoint_result)
+
+            if result["pre_tls_sasl_mechanisms"] is not None:
+                endpoint_result.sasl_pre_tls = True
+                add_sasl_mechanisms(session,
+                                    model.ConnectionPhase.PRE_TLS,
+                                    result["pre_tls_sasl_mechanisms"],
+                                    endpoint_result)
+            else:
+                endpoint_result.sasl_pre_tls = False
+
+            if result["post_tls_sasl_mechanisms"] is not None:
+                endpoint_result.sasl_post_tls = True
+                add_sasl_mechanisms(session,
+                                    model.ConnectionPhase.POST_TLS,
+                                    result["post_tls_sasl_mechanisms"],
+                                    endpoint_result)
+            else:
+                endpoint_result.sasl_post_tls = False
+
+            session.commit()
+
+        return True
+
     async def _handle_message(self, msg):
+        logger.debug("_handle_message(%r)", msg)
+
         if msg["type"] == coordinator_api.RequestType.PING.value:
             return coordinator_api.mkv1response(
                 coordinator_api.ResponseType.PONG,
@@ -497,9 +659,22 @@ class CoordinatorRequestProcessor(RequestProcessor):
                     seconds=self._scan_ratelimit_unprivileged.interval
                 )
             )
+
+            try:
+                domain = normalize_domain(msg["payload"]["domain"])
+            except (ValueError, UnicodeEncodeError):
+                return coordinator_api.mkv1response(
+                    coordinator_api.ResponseType.ERROR,
+                    common_api.mkerror(
+                        common_api.ErrorCode.BAD_REQUEST,
+                        "invalid domain name"
+                    )
+                )
+
             with model.session_scope(self._sessionmaker) as session:
                 nscans = session.query(model.Scan.created_at).filter(
                     model.Scan.created_at >= cutoff,
+                    model.Scan.domain == domain,
                 ).limit(
                     self._scan_ratelimit_unprivileged.burst
                 ).count()
@@ -513,8 +688,7 @@ class CoordinatorRequestProcessor(RequestProcessor):
                     )
 
                 scan = model.Scan()
-                # TODO: IDNA and stuff
-                scan.domain = msg["payload"]["domain"].encode("utf-8")
+                scan.domain = domain
                 scan.created_at = now
                 scan.protocol = model.ScanType(msg["payload"]["protocol"])
                 scan.state = model.ScanState.IN_PROGRESS
@@ -577,6 +751,48 @@ class CoordinatorRequestProcessor(RequestProcessor):
                     job,
                 )
 
+        elif msg["type"] == coordinator_api.RequestType.GET_XMPP_JOB.value:
+            cutoff = datetime.utcnow() - HEARTBEAT_THRESOHLD
+            worker_id = msg["payload"]["worker_id"]
+
+            with model.session_scope(self._sessionmaker) as session:
+                task = session.query(model.PendingScanTask).filter(
+                    model.PendingScanTask.type_ == model.TaskType.XMPP_PROBE,
+                    sqlalchemy.or_(
+                        model.PendingScanTask.heartbeat == None,  # NOQA
+                        model.PendingScanTask.heartbeat < cutoff,
+                    )
+                ).order_by(
+                    model.PendingScanTask.heartbeat.asc()
+                ).limit(1).one_or_none()
+                if task is None:
+                    return coordinator_api.mkv1response(
+                        coordinator_api.ResponseType.NO_TASKS,
+                        {
+                            "ask_again_after": random.randint(1, 3),
+                        },
+                    )
+
+                scan = task.scan
+                job_description = {
+                    "type": "features",
+                    "domain": scan.domain.decode("utf-8"),
+                }
+                job_description.update(json.loads(task.parameters))
+                job = {
+                    "job_id": str(task.id_),
+                    "job": job_description,
+                }
+
+                task.assigned_worker = worker_id
+                task.heartbeat = datetime.utcnow()
+                session.commit()
+
+                return coordinator_api.mkv1response(
+                    coordinator_api.ResponseType.GET_XMPP_JOB,
+                    job,
+                )
+
         elif msg["type"] == coordinator_api.RequestType.TESTSSL_RESULT_PUSH.value:
             job_id = int(msg["payload"]["job_id"])
             worker_id = msg["payload"]["worker_id"]
@@ -605,6 +821,30 @@ class CoordinatorRequestProcessor(RequestProcessor):
                 coordinator_api.ResponseType.OK,
                 {}
             )
+
+        elif msg["type"] == coordinator_api.RequestType.XMPP_COMPLETE.value:
+            job_id = int(msg["payload"]["job_id"])
+            worker_id = msg["payload"]["worker_id"]
+            result = msg["payload"]["xmpp_result"]
+
+            ok = await self._handle_xmpp_result(
+                worker_id,
+                job_id,
+                result,
+            )
+            if ok:
+                return coordinator_api.mkv1response(
+                    coordinator_api.ResponseType.OK,
+                    {}
+                )
+            else:
+                return coordinator_api.mkv1response(
+                    coordinator_api.ResponseType.JOB_CONFIRMATION,
+                    {
+                        "continue": False,
+                    }
+                )
+
         else:
             return coordinator_api.mkv1response(
                 coordinator_api.ResponseType.ERROR,

@@ -1,4 +1,5 @@
 {% extends "_base.html" %}
+{% from "_library.html" import connection_phase, badge, tls_mode_name %}
 {% block body %}
 <h1>Scan result #{{ scan_id }}</h1>
 <dl>
@@ -40,6 +41,54 @@
 {% endfor %}
 	</tbody>
 </table>
+{% endfor %}
+
+<h2>Endpoints</h2>
+<table>
+	<thead>
+		<tr>
+			<th>Hostname</th>
+			<th>Port</th>
+			<th>TLS mode</th>
+			<th>Source</th>
+			<th>Result</th>
+		</tr>
+	</thead>
+	<tbody>
+{% for hostname, port, tls_mode, complete, result, error in endpoints %}
+		<tr>
+			<td>{{ hostname }}</td>
+			<td>{{ port }}</td>
+			<td>{{ tls_mode_name(tls_mode) }}</td>
+			<td>TBD</td>
+			<td>
+			{%- if complete -%}
+			{%- if result -%}
+			{% call badge("success") %}{% trans %}Passed{% endtrans %}{% endcall %}
+			{%- else -%}
+			{% call badge("error", title=error) %}{% trans %}Failed{% endtrans %}{% endcall %}
+			{%- endif -%}
+			{%- else -%}
+			{% call badge("gray") %}{% trans %}In progress{% endtrans %}{% endcall%}
+			{%- endif -%}
+		</tr>
+{% endfor %}
+	</tbody>
+</table>
+
+<h2>Authentication</h2>
+{% for phase in ["pre-tls", "post-tls"] %}
+<h3>{{ connection_phase(phase) }}</h3>
+{% set mechanisms = (sasl_offerings[phase] | default([])) %}
+{% if not mechanisms %}
+{% trans %}No SASL mechanisms offered.{% endtrans %}
+{% else %}
+<ul>
+{% for mech in mechanisms %}
+	<li>{{ mech }}</li>
+{% endfor %}
+</ul>
+{% endif %}
 {% endfor %}
 
 <h2>TLS</h2>

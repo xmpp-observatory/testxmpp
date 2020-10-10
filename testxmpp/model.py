@@ -102,11 +102,32 @@ class TLSMode(enum.Enum):
     DIRECT = "direct"
 
 
+class ConnectionMode(enum.Enum):
+    RFC6120_STARTTLS = "rfc6120-starttls"
+    RFC7395_WEBSOCKETS = "rfc7395-websockets"
+
+    XEP0206_BOSH = "xep0206-bosh"
+    XEP0368_DIRECT = "xep0368-directtls"
+
+
 class TaskType(enum.Enum):
     DISCOVER_ENDPOINTS = "srv-resolve"
-    DISCOVER_TLSA = "tlsa-resolve"
+    RESOLVE_TLSA = "tlsa-resolve"
     SASL_SCAN = "sasl-scan"
     TLS_SCAN = "tls-scan"
+    XMPP_PROBE = "xmpp-probe"
+
+
+class TaskState(enum.Enum):
+    WAITING = "waiting"
+    IN_PROGRESS = "in-progress"
+    FAILED = "failed"
+    DONE = "done"
+
+
+class ConnectionPhase(enum.Enum):
+    PRE_TLS = "pre-tls"
+    POST_TLS = "post-tls"
 
 
 class Base(declarative_base()):
@@ -467,4 +488,132 @@ class PendingScanTask(Base):
         "heartbeat",
         DateTime(),
         nullable=True,
+    )
+
+
+class EndpointScanResult(Base):
+    __tablename__ = "endpoint_scan_result"
+
+    id_ = Column(
+        "id",
+        Integer(),
+        primary_key=True,
+        nullable=False,
+        autoincrement=True,
+    )
+
+    scan_id = Column(
+        "scan_id",
+        Integer(),
+        ForeignKey(Scan.id_, ondelete="CASCADE", onupdate="CASCADE"),
+        nullable=False,
+    )
+
+    scan = relationship(Scan)
+
+    hostname = Column(
+        "hostname",
+        sqlalchemy.types.VARCHAR(255),
+        nullable=False,
+    )
+
+    port = Column(
+        "port",
+        Integer(),
+        nullable=False,
+    )
+
+    tls_mode = Column(
+        "tls_mode",
+        SimpleEnum(TLSMode),
+        nullable=False,
+    )
+
+    tls_offered = Column(
+        "tls_offered",
+        Boolean(),
+        nullable=False,
+    )
+
+    tls_negotiated = Column(
+        "tls_negotiated",
+        Boolean(),
+        nullable=False,
+    )
+
+    sasl_pre_tls = Column(
+        "sasl_pre_tls",
+        Boolean(),
+        nullable=False,
+    )
+
+    sasl_post_tls = Column(
+        "sasl_post_tls",
+        Boolean(),
+        nullable=False,
+    )
+
+    errno = Column(
+        "errno",
+        Integer(),
+        nullable=True,
+    )
+
+    error = Column(
+        "error",
+        Unicode(1023),
+        nullable=True,
+    )
+
+
+class SASLMechanism(Base):
+    __tablename__ = "sasl_mechanism"
+
+    id_ = Column(
+        "id",
+        Integer(),
+        nullable=False,
+        primary_key=True,
+        autoincrement=True,
+    )
+
+    name = Column(
+        "name",
+        Unicode(20),
+        nullable=False,
+    )
+
+
+class EndpointScanSASLOffering(Base):
+    __tablename__ = "endpoint_scan_sasl_offering"
+
+    endpoint_scan_result_id = Column(
+        "endpoint_scan_result_id",
+        Integer(),
+        ForeignKey(EndpointScanResult.id_,
+                   ondelete="CASCADE",
+                   onupdate="CASCADE"),
+        nullable=False,
+        primary_key=True,
+    )
+
+    endpoint_scan_result = relationship(EndpointScanResult)
+
+    sasl_mechanism_id = Column(
+        "sasl_mechanism_id",
+        Integer(),
+        ForeignKey(SASLMechanism.id_,
+                   ondelete="CASCADE",
+                   onupdate="CASCADE"),
+        nullable=False,
+        primary_key=True,
+    )
+
+    sasl_mechanism = relationship(SASLMechanism)
+
+    phase = Column(
+        "phase",
+        SimpleEnum(ConnectionPhase),
+        nullable=False,
+        primary_key=True,
     )

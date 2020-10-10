@@ -9,16 +9,11 @@ import re
 import zmq
 import zmq.asyncio
 
+import testxmpp.common
 import testxmpp.api.coordinator as coordinator_api
 
 
 logger = logging.getLogger(__name__)
-
-
-class NoJob(Exception):
-    def __init__(self, wait_time):
-        super().__init__("no jobs available")
-        self.wait_time = wait_time
 
 
 def decode_line(s):
@@ -44,6 +39,9 @@ ID_CIPHER_OVERRIDE_RE = re.compile(
 )
 ID_CLIENTSIMULATION_RE = re.compile(
     r"^clientsimulation-(?P<client_name>.+)$"
+)
+ID_PFS_CURVES_RE = re.compile(
+    r"^PFS_ECDHE_curves$",
 )
 
 CIPHER_COLUMN_SEP_RE = re.compile(r"\s\s+")
@@ -93,6 +91,10 @@ def interpret_clientsimulation(id_, severity, finding, id_match):
     return ("client-simulation", data["client_name"], tls_version, cipher)
 
 
+def interpret_curves(id_, severity, finding, id_match):
+    return ("ecdh-curves", finding.split())
+
+
 INTERPRETERS = [
     (ID_TLS_VERSION_RE, interpret_tls_version),
     (ID_CIPHERLIST_RE, interpret_cipherlist),
@@ -100,6 +102,7 @@ INTERPRETERS = [
     (ID_CIPHER_RE, interpret_cipher),
     (ID_CIPHER_OVERRIDE_RE, interpret_cipher_override),
     (ID_CLIENTSIMULATION_RE, interpret_clientsimulation),
+    (ID_PFS_CURVES_RE, interpret_curves),
 ]
 
 
@@ -191,42 +194,32 @@ async def run_testssl(testssl, domain, hostname, port, starttls):
             await proc.wait()
 
 
-class TestSSLWorker:
+class TestSSLWorker(testxmpp.common.Worker):
     def __init__(self, coordinator_uri, testssl_argv_base,
                  openssl_path):
-        super().__init__()
-        self._coordinator_uri = coordinator_uri
+        super().__init__(coordinator_uri, logger)
         self._testssl_argv_base = testssl_argv_base + [
             "--openssl", openssl_path,
         ]
-        self._worker_id = secrets.token_hex(16)
-        logger.debug("I am %s", self._worker_id)
         logger.debug("I will use %r", self._testssl_argv_base)
 
-        self._zctx = zmq.asyncio.Context()
-
-    async def _get_job(self, sock):
-        await sock.send_json(
-            coordinator_api.mkv1request(
-                coordinator_api.RequestType.GET_TESTSSL_JOB,
-                {
-                    "worker_id": self._worker_id,
-                }
-            )
+    def _mkjobrequest(self, worker_id):
+        return coordinator_api.mkv1request(
+            coordinator_api.RequestType.GET_TESTSSL_JOB,
+            {
+                "worker_id": worker_id,
+            }
         )
-        resp = coordinator_api.api_response.validate(await sock.recv_json())
+
+    def _decode_job(self, resp):
         if resp["type"] == coordinator_api.ResponseType.GET_TESTSSL_JOB.value:
             return resp["payload"]
-        elif resp["type"] == coordinator_api.ResponseType.NO_TASKS.value:
-            raise NoJob(resp["payload"]["ask_again_after"])
-        else:
-            raise RuntimeError("unexpected server reply: %r".format(resp))
 
     async def _send_push_update(self, sock, job_id, data):
         msg = coordinator_api.mkv1request(
             coordinator_api.RequestType.TESTSSL_RESULT_PUSH,
             {
-                "worker_id": self._worker_id,
+                "worker_id": self.worker_id,
                 "job_id": job_id,
                 "testssl_data": data,
             }
@@ -243,14 +236,7 @@ class TestSSLWorker:
         if not response["payload"]["continue"]:
             raise RuntimeError("cancelled job at server request")
 
-    async def _get_and_run_job(self, sock):
-        logger.debug("fetching job")
-        try:
-            job = await self._get_job(sock)
-        except NoJob as exc:
-            logger.debug("no job, waiting for %d", exc.wait_time)
-            return exc.wait_time
-
+    async def _run_job(self, sock, job):
         logger.info("got job: %r", job)
         if job["tls_mode"] == "starttls":
             if job["protocol"] == "c2s":
@@ -314,7 +300,7 @@ class TestSSLWorker:
         msg = coordinator_api.mkv1request(
             coordinator_api.RequestType.TESTSSL_COMPLETE,
             {
-                "worker_id": self._worker_id,
+                "worker_id": self.worker_id,
                 "job_id": job["job_id"],
                 "testssl_result": result,
             }
@@ -322,29 +308,3 @@ class TestSSLWorker:
         await sock.send_json(msg)
         await sock.recv_json()
         # we don’t care about the reply
-
-        return 1
-
-    async def run(self):
-        sleep_interval = 1
-        coordinator_sock = self._zctx.socket(zmq.REQ)
-        try:
-            logger.debug("talking to coordinator at %r",
-                         self._coordinator_uri)
-            coordinator_sock.connect(self._coordinator_uri)
-            while True:
-                try:
-                    sleep_interval = await self._get_and_run_job(
-                        coordinator_sock
-                    )
-                except Exception:
-                    sleep_interval = min(sleep_interval * 2, 60)
-                    logger.error(
-                        "failed to get or run job. trying again in %d "
-                        "seconds",
-                        exc_info=True,
-                    )
-
-                await asyncio.sleep(sleep_interval)
-        finally:
-            coordinator_sock.close()

@@ -13,3 +13,23 @@
 {% trans %}server-to-server{% endtrans %}
 {%- endif -%}
 {%- endmacro %}
+
+{% macro connection_phase(phase) -%}
+{%- if phase == "pre-tls" -%}
+{% trans %}pre-TLS{% endtrans %}
+{%- else -%}
+{% trans %}post-TLS{% endtrans %}
+{%- endif -%}
+{%- endmacro %}
+
+{% macro badge(class_, title=None, caller=None) %}
+<span class="badge {{ class_ }}"{% if title %} title="{{ title }}"{% endif %}>{{ caller() }}</span>
+{% endmacro %}
+
+{% macro tls_mode_name(tls_mode) -%}
+{%- if tls_mode.value == "starttls" -%}
+StartTLS
+{%- else -%}
+Direct
+{%- endif -%}
+{%- endmacro %}

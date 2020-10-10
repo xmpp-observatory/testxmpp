@@ -3,43 +3,21 @@ import asyncio
 import logging
 import os
 import pathlib
-import sys
+import shlex
 
 import environ
 
-from .daemon import Coordinator
-
-
-@environ.config
-class Ratelimit:
-    burst = environ.var(6, converter=int)
-    interval = environ.var(3600, converter=int)
+from .daemon import XMPPWorker
 
 
 @environ.config(prefix="TESTXMPP")
 class AppConfig:
-    db_uri = environ.var()
-    listen_uri = environ.var("tcp://*:5001")
-
-    @environ.config
-    class DNSAuth:
-        secret = environ.var("")
-
-    @environ.config
-    class Unprivileged:
-        ratelimit = environ.group(Ratelimit)
-
-    @environ.config
-    class Privileged:
-        ratelimit = environ.group(Ratelimit)
-
-    unprivileged = environ.group(Unprivileged)
-    privileged = environ.group(Privileged)
-    dns_auth = environ.group(DNSAuth)
+    coordinator_uri = environ.var("tcp://localhost:5001")
+    s2s_from = environ.var()
 
 
-async def amain(config):
-    coordinator = Coordinator(config)
+async def amain(coordinator_uri, s2s_from):
+    coordinator = XMPPWorker(coordinator_uri, s2s_from)
     await coordinator.run()
 
 
@@ -77,4 +55,4 @@ def main():
     logging.getLogger("testxmpp").setLevel(verbosity_level)
 
     config = environ.to_config(AppConfig)
-    asyncio.run(amain(config))
+    asyncio.run(amain(config.coordinator_uri, config.s2s_from))

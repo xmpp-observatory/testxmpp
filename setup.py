@@ -13,6 +13,8 @@ setup(
         "Flask-SQLAlchemy~=2.4",
         "environ-config~=20.1",
         "Flask-Babel~=2.0",
+        "Flask-WTF~=0.14",
+        "aioxmpp~=0.11",
     ],
     include_package_data=True,
 )

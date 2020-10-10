@@ -1,3 +1,7 @@
+import json
+import os
+import socket
+
 from datetime import datetime
 
 from quart import (
@@ -177,6 +181,63 @@ async def scan_result(scan_id):
         model.PendingScanTask.type_ == model.TaskType.TLS_SCAN
     ).one_or_none())
 
+    sasl_offerings = {}
+    for name, phase in db.session.query(
+                model.SASLMechanism.name,
+                model.EndpointScanSASLOffering.phase,
+            ).select_from(
+                model.EndpointScanResult,
+            ).join(
+                model.EndpointScanSASLOffering,
+            ).join(
+                model.SASLMechanism,
+            ).filter(
+                model.EndpointScanResult.scan_id == scan_id
+            ).group_by(
+                model.SASLMechanism.name,
+                model.EndpointScanSASLOffering.phase,
+            ):
+        sasl_offerings.setdefault(phase.value, []).append(name)
+
+    endpoints = []
+    for endpoint in db.session.query(
+                model.EndpointScanResult
+            ).filter(
+                model.EndpointScanResult.scan_id == scan_id,
+            ):
+        success = endpoint.errno is None and endpoint.error is None
+        if endpoint.errno is not None and endpoint.errno > 0:
+            error = os.strerror(endpoint.conn_errno)
+        else:
+            error = endpoint.error
+
+        endpoints.append(
+            (endpoint.hostname.decode("idna"),
+             endpoint.port,
+             endpoint.tls_mode,
+             True,
+             success,
+             error)
+        )
+
+    for pending in db.session.query(
+                model.PendingScanTask
+            ).filter(
+                model.PendingScanTask.type_ == model.TaskType.XMPP_PROBE,
+                model.PendingScanTask.scan_id == scan_id,
+            ):
+        parameters = json.loads(pending.parameters)
+        endpoints.append(
+            (
+                parameters["hostname"].encode("ascii").decode("idna"),
+                parameters["port"],
+                model.TLSMode(parameters["tls_mode"]),
+                False,
+                False,
+                None,
+            )
+        )
+
     return await render_template(
         "scan_result.html",
         scan_id=scan_id,
@@ -193,4 +254,6 @@ async def scan_result(scan_id):
         srv_records=srv_records,
         ciphers=ciphers,
         tls_pending=tls_pending,
+        sasl_offerings=sasl_offerings,
+        endpoints=endpoints,
     )

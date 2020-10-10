@@ -19,9 +19,15 @@ class RequestType(enum.Enum):
 
     # From workers
     JOB_HEARTBEAT = "job-heartbeat"
+
+    # From testssl workers
     GET_TESTSSL_JOB = "get-testssl-job"
     TESTSSL_RESULT_PUSH = "testssl-result-push"
     TESTSSL_COMPLETE = "testssl-complete"
+
+    # From xmpp workers
+    GET_XMPP_JOB = "get-xmpp-job"
+    XMPP_COMPLETE = "xmpp-complete"
 
 
 class ResponseType(enum.Enum):
@@ -33,6 +39,7 @@ class ResponseType(enum.Enum):
     SCAN_QUEUED = "scan-queued"
 
     GET_TESTSSL_JOB = "get-testssl-job"
+    GET_XMPP_JOB = "get-xmpp-job"
     JOB_CONFIRMATION = "job-confirmation"
 
 
@@ -108,6 +115,10 @@ req_testssl_complete = Schema({
     }
 })
 
+req_get_xmpp_job = Schema({
+    "worker_id": _worker_id,
+})
+
 rep_ok = Schema({})
 
 rep_scan_queued = Schema({
@@ -121,6 +132,33 @@ rep_get_testssl_job = Schema({
     "port": int,
     "protocol": Or("c2s", "s2s"),
     "tls_mode": Or("starttls", "direct"),
+})
+
+rep_get_xmpp_job = Schema({
+    "job_id": str,
+    "job": Schema(Or(
+        {
+            "type": "features",
+            "domain": str,
+            "hostname": str,
+            "port": int,
+            "protocol": Or("c2s", "s2s"),
+            "tls_mode": Or("starttls", "direct"),
+        },
+    )),
+})
+
+req_xmpp_complete = Schema({
+    "worker_id": str,
+    "job_id": str,
+    "xmpp_result": {
+        "tls_offered": bool,
+        "tls_negotiated": bool,
+        "error": Or(None, str),
+        "errno": Or(None, int),
+        "pre_tls_sasl_mechanisms": Or(None, [str]),
+        "post_tls_sasl_mechanisms": Or(None, [str]),
+    }
 })
 
 rep_no_tasks = Schema({
@@ -164,6 +202,16 @@ api_request = Schema(Or(
         "type": RequestType.TESTSSL_COMPLETE.value,
         "payload": req_testssl_complete,
     },
+    {
+        "api_version": _V1_API_VERSION,
+        "type": RequestType.GET_XMPP_JOB.value,
+        "payload": req_get_xmpp_job,
+    },
+    {
+        "api_version": _V1_API_VERSION,
+        "type": RequestType.XMPP_COMPLETE.value,
+        "payload": req_xmpp_complete,
+    },
 ))
 
 api_response = Schema(Or(
@@ -201,6 +249,11 @@ api_response = Schema(Or(
         "api_version": _V1_API_VERSION,
         "type": ResponseType.JOB_CONFIRMATION.value,
         "payload": rep_job_confirmation,
+    },
+    {
+        "api_version": _V1_API_VERSION,
+        "type": ResponseType.GET_XMPP_JOB.value,
+        "payload": rep_get_xmpp_job,
     },
 ))
 
