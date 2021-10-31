@@ -30,6 +30,13 @@ class CustomNonVerifier(aioxmpp.security_layer.PKIXCertificateVerifier):
         return True
 
 
+def try_abort(protocol):
+    try:
+        protocol.abort()
+    except: # NOQA
+        pass
+
+
 async def scan_xmpp(domain: aioxmpp.JID,
                     hostname: str,
                     port: int,
@@ -65,55 +72,63 @@ async def scan_xmpp(domain: aioxmpp.JID,
         verifier.setup_context(ssl_context, transport)
         return ssl_context
 
-    stream.deadtime_hard_limit = timedelta(seconds=negotiation_timeout)
-
     if not use_starttls:
         result.pre_tls_features = None
         result.tls_offered = True
         await verifier.pre_handshake(None, domain, hostname, port)
 
+    stream.deadtime_hard_limit = timedelta(seconds=negotiation_timeout)
+
     try:
-        transport, _ = await aioopenssl.create_starttls_connection(
-            loop,
-            lambda: stream,
-            host=hostname,
-            port=port,
-            peer_hostname=hostname,
-            server_hostname=str(domain).encode("idna").decode("ascii"),
-            use_starttls=use_starttls,
-            ssl_context_factory=context_factory,
-            post_handshake_callback=verifier.post_handshake,
+        conn_future = asyncio.ensure_future(
+            aioopenssl.create_starttls_connection(
+                loop,
+                lambda: stream,
+                host=hostname,
+                port=port,
+                peer_hostname=hostname,
+                server_hostname=str(domain).encode("idna").decode("ascii"),
+                use_starttls=use_starttls,
+                ssl_context_factory=context_factory,
+                post_handshake_callback=verifier.post_handshake,
+            )
         )
-    except OpenSSL.SSL.Error as exc:
-        result.error = str(exc)
-        stream.abort()
-        return result
-    except OSError as exc:
-        result.errno = exc.errno
-        result.error = exc.strerror
-        stream.abort()
-        return result
-    except Exception as exc:  # NOQA
-        stream.abort()
-        raise
+        done, pending = await asyncio.wait(
+            [conn_future, first_features_future],
+            return_when=asyncio.FIRST_EXCEPTION
+        )
 
-    first_features = await first_features_future
-    if not use_starttls:
-        result.post_tls_features = first_features
-        result.tls_negotiated = True
-    else:
-        result.pre_tls_features = first_features
+        for fut in pending:
+            fut.cancel()
 
-        try:
-            first_features[aioxmpp.nonza.StartTLSFeature]
-        except KeyError:
-            result.tls_offered = False
+        # this is the only special case we need to check: if the conn_future
+        # raises, we’ll catch below immediately; if both succeed, everything
+        # is fine.
+        # only if the first_features_future raises before the conn_future
+        # completes (timeout!), we’re in trouble.
+        if pending and first_features_future in done:
+            # something went terribly wrong with the stream
+            await first_features_future
+            assert False
+
+        transport, _ = await conn_future
+        first_features = await first_features_future
+        print(transport, first_features)
+
+        if not use_starttls:
+            result.post_tls_features = first_features
+            result.tls_negotiated = True
         else:
-            result.tls_offered = True
+            result.pre_tls_features = first_features
 
-        # We always try STARTTLS, even if not offered!
+            try:
+                first_features[aioxmpp.nonza.StartTLSFeature]
+            except KeyError:
+                result.tls_offered = False
+            else:
+                result.tls_offered = True
 
-        try:
+            # We always try STARTTLS, even if not offered!
             response = await aioxmpp.protocol.send_and_wait_for(
                 stream,
                 [
@@ -124,30 +139,44 @@ async def scan_xmpp(domain: aioxmpp.JID,
                     aioxmpp.nonza.StartTLSProceed,
                 ]
             )
-        except aioxmpp.errors.StreamError as exc:
-            result.error = str(exc)
-        else:
+
             if isinstance(response, aioxmpp.nonza.StartTLSFailure):
                 result.error = "received <failure/>"
             else:
                 await verifier.pre_handshake(None, domain, hostname, port)
-                try:
-                    await stream.starttls(
-                        ssl_context=context_factory(transport),
-                        post_handshake_callback=verifier.post_handshake,
-                    )
-                except OpenSSL.SSL.Error as exc:
-                    result.error = str(exc)
-                    stream.abort()
-                    return result
-                else:
-                    result.tls_negotiated = True
+                await stream.starttls(
+                    ssl_context=context_factory(transport),
+                    post_handshake_callback=verifier.post_handshake,
+                )
 
-                    result.post_tls_features = \
-                        await aioxmpp.protocol.reset_stream_and_get_features(
-                            stream,
-                            timeout=negotiation_timeout,
-                        )
+                result.tls_negotiated = True
+
+                result.post_tls_features = \
+                    await aioxmpp.protocol.reset_stream_and_get_features(
+                        stream,
+                        timeout=negotiation_timeout,
+                    )
+    except aioxmpp.errors.StreamError as exc:
+        result.error = str(exc)
+        try_abort(stream)
+        return result
+    except aioxmpp.errors.MultiOSError as exc:
+        result.error = str(exc)
+        try_abort(stream)
+        return result
+    except OpenSSL.SSL.Error as exc:
+        result.error = str(exc)
+        try_abort(stream)
+        return result
+    except OSError as exc:
+        result.errno = exc.errno
+        result.error = exc.strerror or str(exc)
+        try_abort(stream)
+        return result
+    except Exception as exc:  # NOQA
+        print("other exception", exc)
+        try_abort(stream)
+        raise
 
     try:
         await asyncio.wait_for(stream.close_and_wait(),

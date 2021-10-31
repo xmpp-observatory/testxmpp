@@ -19,6 +19,7 @@ import sqlalchemy.orm
 
 import zmq
 
+import testxmpp.certutil
 import testxmpp.api.coordinator as coordinator_api
 from testxmpp import model
 from .infra import db, zmq_socket
@@ -100,22 +101,178 @@ async def queue_scan():
     raise RuntimeError("unexpected reply: {!r}".format(reply))
 
 
+def evaluate_task_and_result(task, result):
+    in_progress = task is not None and task.state in [
+        model.TaskState.WAITING,
+        model.TaskState.IN_PROGRESS
+    ]
+
+    passed = (
+        result is not None and result.error is None and
+        result.errno is None
+    )
+
+    if task is not None and task.state == model.TaskState.FAILED:
+        error = task.fail_reason.value
+    elif result is not None:
+        if result.errno is not None and result.errno > 0:
+            error = os.strerror(result.errno)
+        else:
+            error = result.error
+    else:
+        error = None
+
+    return in_progress, passed, error
+
+
+def fetch_host_meta_info(session,
+                         scan_id: int):
+    objects = {
+        id_: (format_, url)
+        for id_, format_, url in session.query(
+            model.HostMetaObject.id_,
+            model.HostMetaObject.format_,
+            model.HostMetaObject.url,
+        ).filter(
+            model.HostMetaObject.scan_id == scan_id,
+        )
+    }
+    object_info = sorted(objects.values(), key=lambda x: x[0].value)
+
+    links_collection = {}
+    for object_id, rel, href in session.query(
+                model.HostMetaLink.object_id,
+                model.HostMetaLink.rel,
+                model.HostMetaLink.href,
+            ).select_from(model.HostMetaLink).join(
+                model.HostMetaObject,
+            ).filter(
+                model.HostMetaObject.scan_id == scan_id,
+            ):
+        links_collection.setdefault((rel, href), []).append(
+            objects[object_id][0]
+        )
+
+    links = sorted(
+        ((rel, href, formats)
+         for (rel, href), formats in links_collection.items()),
+        key=lambda x: (x[0], x[1])
+    )
+
+    return object_info, links
+
+
 @bp.route("/scan/result/<int:scan_id>", methods=["GET"])
 async def scan_result(scan_id):
     try:
-        domain, protocol, created_at, scan_host, scan_port, scan_tls_mode = \
+        domain, protocol, created_at = \
             db.session.query(
                 model.Scan.domain,
                 model.Scan.protocol,
                 model.Scan.created_at,
-                model.Scan.primary_host,
-                model.Scan.primary_port,
-                model.Scan.primary_tls_mode,
             ).filter(
                 model.Scan.id_ == scan_id
             ).one()
     except sqlalchemy.orm.exc.NoResultFound:
         return abort(404)
+
+    srv_records = list(db.session.query(
+        model.SRVRecord.priority,
+        model.SRVRecord.weight,
+        model.SRVRecord.service,
+        model.SRVRecord.host,
+        model.SRVRecord.port,
+    ).filter(
+        model.SRVRecord.scan_id == scan_id,
+    ).order_by(
+        model.SRVRecord.priority.asc(),
+        model.SRVRecord.weight.desc(),
+        model.SRVRecord.service.asc(),
+    ))
+
+    xmppconnect_records = list(db.session.query(
+        model.XMPPConnectRecord.attribute_name,
+        model.XMPPConnectRecord.attribute_value,
+    ).filter(
+        model.XMPPConnectRecord.scan_id == scan_id,
+    ).order_by(
+        model.XMPPConnectRecord.attribute_name.asc(),
+    ))
+
+    host_meta_object_info, host_meta_links = fetch_host_meta_info(
+        db.session,
+        scan_id,
+    )
+
+    endpoints = []
+    for ep, task, result in db.session.query(
+                model.EndpointTCP,
+                model.ScanTask,
+                model.EndpointScanResult,
+            ).select_from(
+                model.EndpointTCP,
+            ).outerjoin(
+                model.ScanTask,
+            ).outerjoin(
+                model.EndpointScanResult
+            ).filter(
+                model.EndpointTCP.scan_id == scan_id,
+                model.ScanTask.type_ == model.TaskType.XMPP_PROBE,
+            ).order_by(
+                model.EndpointTCP.endpoint_id.asc()
+            ):
+
+        if ep.srv_record_id is not None:
+            source = model.EndpointSource.SRV_RECORD.value
+        else:
+            source = model.EndpointSource.FALLBACK.value
+
+        endpoints.append((
+            source, ep.transport.value, ep.uri, ep.tls_mode.value,
+            evaluate_task_and_result(task, result),
+        ))
+
+    for ep, task, result in db.session.query(
+                model.EndpointHTTP,
+                model.ScanTask,
+                model.EndpointScanResult,
+            ).select_from(
+                model.EndpointHTTP,
+            ).outerjoin(
+                model.ScanTask,
+            ).outerjoin(
+                model.EndpointScanResult
+            ).filter(
+                model.EndpointHTTP.scan_id == scan_id,
+            ).order_by(
+                model.EndpointHTTP.endpoint_id.asc()
+            ):
+
+        endpoints.append(
+            (model.EndpointSource.ALTERNATIVE_METHOD.value,
+             ep.transport.value, ep.uri, ep.http_mode.value,
+             evaluate_task_and_result(task, result))
+        )
+
+    sasl_offerings = {
+        v.value: []
+        for v in model.ConnectionPhase
+    }
+    for phase, name in db.session.query(
+                model.EndpointScanSASLOffering.phase,
+                model.SASLMechanism.name
+            ).select_from(model.Endpoint).join(
+                model.EndpointScanResult
+            ).join(
+                model.EndpointScanSASLOffering
+            ).join(
+                model.SASLMechanism
+            ).filter(
+                model.Endpoint.scan_id == scan_id,
+            ).distinct().order_by(
+                model.SASLMechanism.name.asc(),
+            ):
+        sasl_offerings[phase.value].append(name)
 
     tls_offering_schema = [
         ("SSL 2", [1, -1]),
@@ -127,7 +284,7 @@ async def scan_result(scan_id):
     ]
 
     try:
-        *tls_versions, server_cipher_order = db.session.query(
+        *tls_versions, server_cipher_order, endpoint_id = db.session.query(
             model.TLSOffering.sslv2,
             model.TLSOffering.sslv3,
             model.TLSOffering.tlsv1,
@@ -135,106 +292,107 @@ async def scan_result(scan_id):
             model.TLSOffering.tlsv1_2,
             model.TLSOffering.tlsv1_3,
             model.TLSOffering.server_cipher_order,
+            model.Endpoint.id_,
+        ).select_from(model.TLSOffering).join(
+            model.Endpoint,
         ).filter(
-            model.TLSOffering.scan_id == scan_id,
+            model.Endpoint.scan_id == scan_id,
         ).one()
     except sqlalchemy.orm.exc.NoResultFound:
         tls_versions = [None] * len(tls_offering_schema)
         server_cipher_order = None
+        tls_scan_uri = None
+    else:
+        tls_scan_endpoint = db.session.query(
+            model.Endpoint,
+        ).filter(
+            model.Endpoint.id_ == endpoint_id,
+        ).one()
+        tls_scan_uri = tls_scan_endpoint.uri
 
     tls_offering_info = [
         (label, scores[offered] if offered is not None else 0, offered)
         for (label, scores), offered in zip(tls_offering_schema, tls_versions)
     ]
 
-    srv_records = {}
-    for service, priority, weight, host, port in db.session.query(
-                model.SRVRecord.service,
-                model.SRVRecord.priority,
-                model.SRVRecord.weight,
-                model.SRVRecord.host,
-                model.SRVRecord.port,
-            ).filter(
-                model.SRVRecord.scan_id == scan_id,
-            ).order_by(
-                model.SRVRecord.priority.asc(),
-                model.SRVRecord.weight.desc(),
-            ):
-        srv_records.setdefault(service, []).append(
-            (priority, weight, host.decode("idna"), port)
-        )
-
     ciphers = list(db.session.query(
         model.CipherOffering.cipher_id,
         model.CipherMetadata.openssl_name,
         model.CipherOffering.key_exchange_info,
-    ).select_from(model.CipherOffering).join(model.CipherMetadata).join(
+    ).select_from(
+        model.CipherOffering
+    ).join(
+        model.CipherMetadata
+    ).join(
         model.CipherOfferingOrder
+    ).join(
+        model.Endpoint
     ).filter(
-        model.CipherOffering.scan_id == scan_id,
+        model.Endpoint.scan_id == scan_id,
     ).order_by(
         model.CipherOfferingOrder.order.asc(),
     ))
 
-    tls_pending = bool(db.session.query(model.PendingScanTask.id_).filter(
-        model.PendingScanTask.scan_id == scan_id,
-        model.PendingScanTask.type_ == model.TaskType.TLS_SCAN
-    ).one_or_none())
+    # TODO: this is not safe with multiple endpoints being testssl'd'
+    certs = list(db.session.query(
+        model.Certificate.id_,
+        model.Certificate.subject,
+        model.Certificate.issuer,
+        model.Certificate.not_before,
+        model.Certificate.not_after,
+        model.Certificate.public_key,
+        model.Certificate.public_key_type,
+        model.Certificate.fingerprint_sha1,
+        model.Certificate.fingerprint_sha256,
+        model.Certificate.fingerprint_sha512,
+    ).select_from(
+        model.Endpoint,
+    ).join(
+        model.CertificateOffering,
+    ).join(
+        model.Certificate,
+    ).filter(
+        model.Endpoint.scan_id == scan_id,
+    ).order_by(
+        model.CertificateOffering.chain_index.asc(),
+    ))
 
-    sasl_offerings = {}
-    for name, phase in db.session.query(
-                model.SASLMechanism.name,
-                model.EndpointScanSASLOffering.phase,
-            ).select_from(
-                model.EndpointScanResult,
-            ).join(
-                model.EndpointScanSASLOffering,
-            ).join(
-                model.SASLMechanism,
-            ).filter(
-                model.EndpointScanResult.scan_id == scan_id
-            ).group_by(
-                model.SASLMechanism.name,
-                model.EndpointScanSASLOffering.phase,
-            ):
-        sasl_offerings.setdefault(phase.value, []).append(name)
+    cert_chain = []
+    for (cert_id,
+         subject, issuer,
+         not_before, not_after,
+         public_key, public_key_type,
+         fp_sha1, fp_sha256, fp_sha512) in certs:
+        sans = {}
 
-    endpoints = []
-    for endpoint in db.session.query(
-                model.EndpointScanResult
-            ).filter(
-                model.EndpointScanResult.scan_id == scan_id,
-            ):
-        success = endpoint.errno is None and endpoint.error is None
-        if endpoint.errno is not None and endpoint.errno > 0:
-            error = os.strerror(endpoint.conn_errno)
-        else:
-            error = endpoint.error
+        for asn1_name, value in db.session.query(
+                    model.SubjectAltNameType.asn1_name,
+                    model.SubjectAltName.value,
+                ).select_from(
+                    model.SubjectAltName,
+                ).join(
+                    model.SubjectAltNameType,
+                ).filter(
+                    model.SubjectAltName.certificate_id == cert_id,
+                ).order_by(
+                    model.SubjectAltNameType.asn1_name.asc(),
+                ):
+            sans.setdefault(asn1_name, []).append(value)
 
-        endpoints.append(
-            (endpoint.hostname.decode("idna"),
-             endpoint.port,
-             endpoint.tls_mode,
-             True,
-             success,
-             error)
-        )
-
-    for pending in db.session.query(
-                model.PendingScanTask
-            ).filter(
-                model.PendingScanTask.type_ == model.TaskType.XMPP_PROBE,
-                model.PendingScanTask.scan_id == scan_id,
-            ):
-        parameters = json.loads(pending.parameters)
-        endpoints.append(
-            (
-                parameters["hostname"].encode("ascii").decode("idna"),
-                parameters["port"],
-                model.TLSMode(parameters["tls_mode"]),
-                False,
-                False,
-                None,
+        cert_chain.append(
+            testxmpp.certutil.CertInfo(
+                subject=json.loads(subject),
+                issuer=json.loads(issuer),
+                subject_alt_names=sans,
+                public_key=public_key,
+                public_key_type=public_key_type,
+                not_before=not_before,
+                not_after=not_after,
+                fingerprints={
+                    "sha1": fp_sha1,
+                    "sha256": fp_sha256,
+                    "sha512": fp_sha512,
+                },
             )
         )
 
@@ -245,15 +403,16 @@ async def scan_result(scan_id):
             "domain": domain.decode("idna"),
             "protocol": protocol,
             "created_at": created_at,
-            "host": scan_host.decode("idna") if scan_host else None,
-            "port": scan_port,
-            "tls_mode": scan_tls_mode,
         },
-        tls_offering_info=tls_offering_info,
-        server_cipher_order=server_cipher_order,
         srv_records=srv_records,
-        ciphers=ciphers,
-        tls_pending=tls_pending,
-        sasl_offerings=sasl_offerings,
+        xmppconnect_records=xmppconnect_records,
         endpoints=endpoints,
+        host_meta_object_info=host_meta_object_info,
+        host_meta_links=host_meta_links,
+        sasl_offerings=sasl_offerings,
+        tls_offering_info=tls_offering_info,
+        tls_scan_uri=tls_scan_uri,
+        server_cipher_order=server_cipher_order,
+        ciphers=ciphers,
+        cert_chain=cert_chain,
     )

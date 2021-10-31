@@ -54,6 +54,27 @@ cipher_info = Schema({
     "iana_name": str,
 })
 
+cert_name = Schema([
+    {
+        str: str,
+    }
+])
+
+certificate_info = Schema({
+    "subject": cert_name,
+    "issuer": cert_name,
+    "subject_alt_names": Or({
+        str: [str],
+    }, None),
+    "not_before": str,
+    "not_after": str,
+    "public_key": str,
+    "public_key_type": str,
+    "fingerprints": {
+        str: str,
+    },
+})
+
 gen_echo = Schema({})
 
 req_scan_domain = Schema({
@@ -93,8 +114,19 @@ _testssl_data = Schema(Or(
     },
     {
         "type": "certificate",
-        "certificate": str,
-    }
+        "certificate": {
+            "info": certificate_info,
+            "raw_der": str,
+        },
+    },
+    {
+        "type": "intermediate_certificate",
+        "certificate": {
+            "index": int,
+            "info": certificate_info,
+            "raw_der": str,
+        },
+    },
 ))
 
 req_testssl_result_push = Schema({
@@ -109,7 +141,15 @@ req_testssl_complete = Schema({
     "testssl_result": {
         "tls_versions": {str: bool},
         "cipherlists": {str: [str]},
-        "certificate": str,
+        "certificate": {
+            "info": certificate_info,
+            "raw_der": str,
+        },
+        "intermediate_certificates": [{
+            "index": int,
+            "info": certificate_info,
+            "raw_der": str,
+        }],
         "server_cipher_order": bool,
         "ciphers": [cipher_info],
     }

@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import csv
 import io
 import logging
@@ -9,6 +10,10 @@ import re
 import zmq
 import zmq.asyncio
 
+import pyasn1
+import pyasn1_modules
+
+import testxmpp.certutil
 import testxmpp.common
 import testxmpp.api.coordinator as coordinator_api
 
@@ -26,10 +31,13 @@ ID_TLS_VERSION_RE = re.compile(
     r"^(SSLv2|SSLv3|TLS1(_[0-9]+)?)$"
 )
 ID_CIPHERLIST_RE = re.compile(
-    r"^(cipherorder_(?P<tls_version>TLSv1_[23]))$"
+    r"^((cipherorder|supportedciphers)_(?P<tls_version>(SSLv2|SSLv3|TLSv1(_[123])?)))$"
 )
 ID_CERT_RE = re.compile(
     r"^cert$"
+)
+ID_INTERMEDIATE_RE = re.compile(
+    r"^intermediate_cert <#(?P<chain_index>\d+)>$"
 )
 ID_CIPHER_RE = re.compile(
     r"^cipher_x(?P<cipher_id>[0-9a-f]+)$"
@@ -43,8 +51,20 @@ ID_CLIENTSIMULATION_RE = re.compile(
 ID_PFS_CURVES_RE = re.compile(
     r"^PFS_ECDHE_curves$",
 )
+ID_IGNORE_RE = re.compile(
+    r"^(cipher-.*|TLS_.*|sessionresumption_.*|protocol_negotiated|"
+    r"cipher_negotiated)$"
+)
 
 CIPHER_COLUMN_SEP_RE = re.compile(r"\s\s+")
+
+
+def unwrap_cert(cert: str) -> str:
+    return cert.replace(
+        " ", "\n",
+    ).replace(
+        "\nCERTIFICATE-", " CERTIFICATE-",
+    )
 
 
 def interpret_tls_version(id_, severity, finding, id_match):
@@ -62,7 +82,14 @@ def interpret_cipherlist(id_, severity, finding, id_match):
 
 
 def interpret_cert(id_, severity, finding, id_match):
-    return ("certificate", finding.replace(" ", "\n"))
+    return ("certificate", unwrap_cert(finding))
+
+
+def interpret_intermediate_cert(id_, severity, finding, id_match):
+    data = id_match.groupdict()
+    return ("intermediate-certificate",
+            unwrap_cert(finding),
+            int(data["chain_index"]))
 
 
 def interpret_cipher(id_, severity, finding, id_match):
@@ -95,14 +122,20 @@ def interpret_curves(id_, severity, finding, id_match):
     return ("ecdh-curves", finding.split())
 
 
+def ignore(id_, severity, finding, id_match):
+    pass
+
+
 INTERPRETERS = [
     (ID_TLS_VERSION_RE, interpret_tls_version),
     (ID_CIPHERLIST_RE, interpret_cipherlist),
     (ID_CERT_RE, interpret_cert),
+    (ID_INTERMEDIATE_RE, interpret_intermediate_cert),
     (ID_CIPHER_RE, interpret_cipher),
     (ID_CIPHER_OVERRIDE_RE, interpret_cipher_override),
     (ID_CLIENTSIMULATION_RE, interpret_clientsimulation),
     (ID_PFS_CURVES_RE, interpret_curves),
+    (ID_IGNORE_RE, ignore),
 ]
 
 
@@ -113,7 +146,8 @@ def interpret_line(id_, severity, finding):
             continue
         return interpreter(id_, severity, finding, m)
 
-    logger.debug("no interpreter matched ID %r", id_)
+    logger.debug("no interpreter matched ID %r: %r %r", id_,
+                 severity, finding)
 
 
 async def line_communicate(proc, reader, writer_fd):
@@ -164,8 +198,8 @@ async def run_testssl(testssl, domain, hostname, port, starttls):
     proc = await asyncio.create_subprocess_exec(
         *argv,
         stdin=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.DEVNULL,
+        # stdout=asyncio.subprocess.DEVNULL,
+        # stderr=asyncio.subprocess.DEVNULL,
         pass_fds=[pipew],
     )
 
@@ -250,6 +284,7 @@ class TestSSLWorker(testxmpp.common.Worker):
             "tls_versions": {},
             "cipherlists": {},
             "certificate": None,
+            "intermediate_certificates": [],
             "server_cipher_order": False,
             "ciphers": []
         }
@@ -284,10 +319,31 @@ class TestSSLWorker(testxmpp.common.Worker):
                 })
 
             elif type_ == "certificate":
-                result["certificate"] = info[0]
+                raw_der = testxmpp.certutil.unwrap_pem(info[0])
+                result["certificate"] = {
+                    "info": testxmpp.certutil.extract_cert_info(
+                        testxmpp.certutil.decode_cert_der(raw_der)
+                    ).to_json(),
+                    "raw_der": base64.b64encode(raw_der).decode("ascii"),
+                }
                 await self._send_push_update(sock, job["job_id"], {
                     "type": "certificate",
                     "certificate": result["certificate"],
+                })
+
+            elif type_ == "intermediate-certificate":
+                raw_der = testxmpp.certutil.unwrap_pem(info[0])
+                cert_block = {
+                    "index": info[1],
+                    "info": testxmpp.certutil.extract_cert_info(
+                        testxmpp.certutil.decode_cert_der(raw_der)
+                    ).to_json(),
+                    "raw_der": base64.b64encode(raw_der).decode("ascii"),
+                }
+                result["intermediate_certificates"].append(cert_block)
+                await self._send_push_update(sock, job["job_id"], {
+                    "type": "intermediate_certificate",
+                    "certificate": cert_block,
                 })
 
             elif type_ == "cipher-offered":
@@ -306,5 +362,9 @@ class TestSSLWorker(testxmpp.common.Worker):
             }
         )
         await sock.send_json(msg)
-        await sock.recv_json()
-        # we don’t care about the reply
+        resp = await sock.recv_json()
+        if resp["type"] != coordinator_api.ResponseType.OK.value:
+            self.logger.warning(
+                "coordinator rejected our result: %r",
+                resp
+            )

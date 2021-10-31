@@ -38,4 +38,20 @@ def create_app():
     def format_timedelta(dt, **kwargs):
         return flask_babel.format_timedelta(dt, **kwargs)
 
+    @app.template_filter(name="decode_domain")
+    def decode_domain(d, **kwargs):
+        if isinstance(d, str):
+            return d
+        return d.decode("idna")
+
+    @app.template_filter(name="printable_bytes")
+    def printable_bytes(b, **kwargs):
+        if isinstance(b, str):
+            return b
+        return b.decode("utf-8", errors="replace")
+
+    @app.template_filter(name="hexdigest")
+    def hexdigest(bs, **kwargs):
+        return ":".join("{:02x}".format(b) for b in bs)
+
     return app

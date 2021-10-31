@@ -1,5 +1,9 @@
 import contextlib
 import enum
+import json
+import typing
+
+from datetime import datetime
 
 import sqlalchemy
 from sqlalchemy import (
@@ -18,11 +22,15 @@ from sqlalchemy.ext.declarative import declarative_base
 
 
 @contextlib.contextmanager
-def session_scope(sessionmaker):
+def session_scope(sessionmaker, allow_autoflush=False):
     """Provide a transactional scope around a series of operations."""
     session = sessionmaker()
     try:
-        yield session
+        if allow_autoflush:
+            yield session
+        else:
+            with session.no_autoflush:
+                yield session
     except:  # NOQA
         session.rollback()
         raise
@@ -60,6 +68,7 @@ def get_generic_engine(uri: str) -> sqlalchemy.engine.Engine:
 
 
 class SimpleEnum(sqlalchemy.types.TypeDecorator):
+    cache_ok = True
     impl = sqlalchemy.types.Unicode
 
     def __init__(self, enum_type):
@@ -102,12 +111,26 @@ class TLSMode(enum.Enum):
     DIRECT = "direct"
 
 
-class ConnectionMode(enum.Enum):
-    RFC6120_STARTTLS = "rfc6120-starttls"
-    RFC7395_WEBSOCKETS = "rfc7395-websockets"
+class HostMetaFormat(enum.Enum):
+    XML = "xml"
+    JSON = "json"
 
-    XEP0206_BOSH = "xep0206-bosh"
-    XEP0368_DIRECT = "xep0368-directtls"
+
+class EndpointSource(enum.Enum):
+    FALLBACK = "fallback"
+    SRV_RECORD = "srv"
+    ALTERNATIVE_METHOD = "altconnect"
+
+
+class TransportLayer(enum.Enum):
+    TCP = "tcp"
+    HTTP = "http"
+
+
+class HTTPMode(enum.Enum):
+    XEP0025_POLLING = "polling"
+    XEP0206_BOSH = "bosh"
+    RFC7395_WEBSOCKETS = "ws"
 
 
 class TaskType(enum.Enum):
@@ -116,6 +139,7 @@ class TaskType(enum.Enum):
     SASL_SCAN = "sasl-scan"
     TLS_SCAN = "tls-scan"
     XMPP_PROBE = "xmpp-probe"
+    SELECT_ENDPOINTS = "select-endpoints"
 
 
 class TaskState(enum.Enum):
@@ -123,6 +147,12 @@ class TaskState(enum.Enum):
     IN_PROGRESS = "in-progress"
     FAILED = "failed"
     DONE = "done"
+
+
+class FailReason(enum.Enum):
+    TIMEOUT = "timeout"
+    INTERNAL_ERROR = "internal-error"
+    UNSUPPORTED = "unsupported"
 
 
 class ConnectionPhase(enum.Enum):
@@ -133,6 +163,71 @@ class ConnectionPhase(enum.Enum):
 class Base(declarative_base()):
     __abstract__ = True
     __table_args__ = {}
+
+
+# GLOBAL DATA
+
+
+class CipherMetadata(Base):
+    __tablename__ = "cipher_metadata"
+
+    id_ = Column(
+        "id",
+        Integer(),
+        primary_key=True,
+        nullable=False,
+    )
+
+    openssl_name = Column(
+        "openssl_name",
+        Unicode(255),
+        nullable=True,
+    )
+
+    iana_name = Column(
+        "iana_name",
+        Unicode(255),
+        nullable=True,
+    )
+
+
+class SASLMechanism(Base):
+    __tablename__ = "sasl_mechanism"
+
+    id_ = Column(
+        "id",
+        Integer(),
+        nullable=False,
+        primary_key=True,
+        autoincrement=True,
+    )
+
+    name = Column(
+        "name",
+        Unicode(20),
+        nullable=False,
+    )
+
+
+class SubjectAltNameType(Base):
+    __tablename__ = "san_type"
+
+    id_ = Column(
+        "id",
+        Integer(),
+        nullable=False,
+        primary_key=True,
+        autoincrement=True,
+    )
+
+    asn1_name = Column(
+        "asn1_name",
+        Unicode(128),
+        nullable=False,
+    )
+
+
+# PER SCAN DATA
 
 
 class Scan(Base):
@@ -163,24 +258,6 @@ class Scan(Base):
         "created_at",
         DateTime(),
         nullable=False,
-    )
-
-    primary_host = Column(
-        "primary_host",
-        sqlalchemy.types.VARCHAR(255),
-        nullable=True,
-    )
-
-    primary_port = Column(
-        "primary_port",
-        Integer(),
-        nullable=True,
-    )
-
-    primary_tls_mode = Column(
-        "primary_tls_mode",
-        SimpleEnum(TLSMode),
-        nullable=True,
     )
 
     state = Column(
@@ -216,146 +293,6 @@ class Scan(Base):
     privileged = Column(
         "privileged",
         Boolean(),
-        nullable=False,
-    )
-
-
-class TLSOffering(Base):
-    __tablename__ = "tls_offering"
-
-    scan_id = Column(
-        "scan_id",
-        Integer(),
-        ForeignKey(Scan.id_, ondelete="CASCADE", onupdate="CASCADE"),
-        primary_key=True,
-        nullable=False,
-    )
-
-    sslv2 = Column("sslv2", Boolean(),
-                   nullable=True)
-    sslv3 = Column("sslv3", Boolean(),
-                   nullable=True)
-    tlsv1 = Column("tlsv1", Boolean(),
-                   nullable=True)
-    tlsv1_1 = Column("tlsv1_1", Boolean(),
-                     nullable=True)
-    tlsv1_2 = Column("tlsv1_2", Boolean(),
-                     nullable=True)
-    tlsv1_3 = Column("tlsv1_3", Boolean(),
-                     nullable=True)
-
-    server_cipher_order = Column("server_cipher_order", Boolean(),
-                                 nullable=True)
-
-
-class Certificate(Base):
-    __tablename__ = "certificate"
-
-    scan_id = Column(
-        "scan_id",
-        Integer(),
-        ForeignKey(Scan.id_, ondelete="CASCADE", onupdate="CASCADE"),
-        primary_key=True,
-        nullable=False,
-    )
-
-    leaf_certificate = Column(
-        "leaf_certificate",
-        sqlalchemy.types.VARCHAR(4095),
-        nullable=True,
-    )
-
-    certificate_chain = Column(
-        "certificate_chain",
-        sqlalchemy.types.VARCHAR(8191),
-        nullable=True,
-    )
-
-
-class CipherMetadata(Base):
-    __tablename__ = "cipher_metadata"
-
-    id_ = Column(
-        "id",
-        Integer(),
-        primary_key=True,
-        nullable=False,
-    )
-
-    openssl_name = Column(
-        "openssl_name",
-        Unicode(255),
-        nullable=True,
-    )
-
-    iana_name = Column(
-        "iana_name",
-        Unicode(255),
-        nullable=True,
-    )
-
-
-class CipherOffering(Base):
-    __tablename__ = "cipher_offering"
-
-    scan_id = Column(
-        "scan_id",
-        Integer(),
-        ForeignKey(Scan.id_, ondelete="CASCADE", onupdate="CASCADE"),
-        primary_key=True,
-        nullable=False,
-    )
-
-    cipher_id = Column(
-        "cipher_id",
-        Integer(),
-        ForeignKey(CipherMetadata.id_,
-                   onupdate="CASCADE"),
-        primary_key=True,
-        nullable=False,
-    )
-
-    key_exchange_info = Column(
-        "key_exchange_info",
-        Unicode(127),
-        nullable=True,
-    )
-
-
-class CipherOfferingOrder(Base):
-    __tablename__ = "cipher_offering_order"
-
-    __table_args__ = (
-        ForeignKeyConstraint(
-            ["scan_id", "cipher_id"],
-            ["cipher_offering.scan_id", "cipher_offering.cipher_id"]
-        ),
-    )
-
-    scan_id = Column(
-        "scan_id",
-        Integer(),
-        primary_key=True,
-        nullable=False,
-    )
-
-    cipher_id = Column(
-        "cipher_id",
-        Integer(),
-        primary_key=True,
-        nullable=False,
-    )
-
-    tls_version = Column(
-        "tls_version",
-        Unicode(32),
-        primary_key=True,
-        nullable=False,
-    )
-
-    order = Column(
-        "order",
-        Integer(),
         nullable=False,
     )
 
@@ -415,8 +352,8 @@ class SRVRecord(Base):
     )
 
 
-class SASLMechanismOffering(Base):
-    __tablename__ = "sasl_mechansim_offering"
+class XMPPConnectRecord(Base):
+    __tablename__ = "xmppconnect_record"
 
     id_ = Column(
         "id",
@@ -433,21 +370,21 @@ class SASLMechanismOffering(Base):
         nullable=False,
     )
 
-    phase = Column(
-        "phase",
-        SimpleEnum(SASLOfferingPhase),
+    attribute_name = Column(
+        "attribute_name",
+        sqlalchemy.types.VARBINARY(1023),
         nullable=False,
     )
 
-    mechanism = Column(
-        "mechanism",
-        Unicode(20),
-        nullable=False,
+    attribute_value = Column(
+        "attribute_value",
+        sqlalchemy.types.VARBINARY(1023),
+        nullable=True,
     )
 
 
-class PendingScanTask(Base):
-    __tablename__ = "pending_scan_task"
+class HostMetaObject(Base):
+    __tablename__ = "host_meta_object"
 
     id_ = Column(
         "id",
@@ -455,6 +392,434 @@ class PendingScanTask(Base):
         primary_key=True,
         nullable=False,
         autoincrement=True,
+    )
+
+    scan_id = Column(
+        "scan_id",
+        Integer(),
+        ForeignKey(Scan.id_,
+                   ondelete="CASCADE", onupdate="CASCADE"),
+        nullable=False,
+    )
+
+    url = Column(
+        "url",
+        Unicode(1023),
+        nullable=False,
+    )
+
+    format_ = Column(
+        "format",
+        SimpleEnum(HostMetaFormat),
+        nullable=False,
+    )
+
+
+class HostMetaLink(Base):
+    __tablename__ = "host_meta_link"
+
+    id_ = Column(
+        "id",
+        Integer(),
+        primary_key=True,
+        nullable=False,
+        autoincrement=True,
+    )
+
+    object_id = Column(
+        "object_id",
+        Integer(),
+        ForeignKey(HostMetaObject.id_,
+                   ondelete="CASCADE", onupdate="CASCADE"),
+        nullable=False,
+    )
+
+    object_ = relationship(HostMetaObject)
+
+    rel = Column(
+        "rel",
+        Unicode(1023),
+        nullable=False,
+    )
+
+    href = Column(
+        "href",
+        Unicode(1023),
+        nullable=False,
+    )
+
+
+class Endpoint(Base):
+    __tablename__ = "endpoint"
+
+    id_ = Column(
+        "id",
+        Integer(),
+        autoincrement=True,
+        primary_key=True,
+        nullable=False,
+    )
+
+    scan_id = Column(
+        "scan_id",
+        Integer(),
+        ForeignKey(Scan.id_, ondelete="CASCADE", onupdate="CASCADE"),
+        nullable=False,
+    )
+
+    transport = Column(
+        "transport",
+        SimpleEnum(TransportLayer),
+        nullable=False,
+    )
+
+    # For SRV-sourced endpoints
+    srv_record_id = Column(
+        "srv_record_id",
+        Integer(),
+        ForeignKey(SRVRecord.id_, ondelete="SET NULL", onupdate="CASCADE"),
+        nullable=True,
+    )
+
+    srv_record = relationship(SRVRecord)
+
+    # For xmppconnect endpoints
+    xmppconnect_record_id = Column(
+        "xmppconnect_record_id",
+        Integer(),
+        ForeignKey(XMPPConnectRecord.id_,
+                   ondelete="SET NULL", onupdate="CASCADE"),
+        nullable=True,
+    )
+
+    xmppconnect_record = relationship(XMPPConnectRecord)
+
+    # For host-meta-sourced endpoints
+    host_meta_link_id = Column(
+        "host_meta_link_id",
+        Integer(),
+        ForeignKey(HostMetaLink.id_, ondelete="SET NULL", onupdate="CASCADE"),
+        nullable=True,
+    )
+
+    host_meta_link = relationship(HostMetaLink)
+
+    __mapper_args__ = {
+        "polymorphic_on": transport
+    }
+
+
+class EndpointTCP(Endpoint):
+    __tablename__ = "endpoint_tcp"
+
+    endpoint_id = Column(
+        "endpoint_id",
+        Integer(),
+        ForeignKey(Endpoint.id_, ondelete="CASCADE", onupdate="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    )
+
+    tls_mode = Column(
+        "tls_mode",
+        SimpleEnum(TLSMode),
+        nullable=False,
+    )
+
+    hostname = Column(
+        "hostname",
+        sqlalchemy.types.VARBINARY(255),
+        nullable=False,
+    )
+
+    port = Column(
+        "port",
+        Integer(),
+        nullable=False,
+    )
+
+    __mapper_args__ = {
+        "polymorphic_identity": TransportLayer.TCP,
+    }
+
+    @property
+    def uri(self):
+        return "{}:{}".format(self.hostname.decode("idna").rstrip("."),
+                              self.port)
+
+
+class EndpointHTTP(Endpoint):
+    __tablename__ = "endpoint_http"
+
+    endpoint_id = Column(
+        "endpoint_id",
+        Integer(),
+        ForeignKey(Endpoint.id_, ondelete="CASCADE", onupdate="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    )
+
+    url = Column(
+        "url",
+        Unicode(1023),
+        nullable=False,
+    )
+
+    http_mode = Column(
+        "http_mode",
+        SimpleEnum(HTTPMode),
+        nullable=False,
+    )
+
+    @property
+    def uri(self):
+        return self.url
+
+    __mapper_args__ = {
+        "polymorphic_identity": TransportLayer.HTTP,
+    }
+
+
+class TLSOffering(Base):
+    __tablename__ = "tls_offering"
+
+    endpoint_id = Column(
+        "endpoint_id",
+        Integer(),
+        ForeignKey(Endpoint.id_, ondelete="CASCADE", onupdate="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    )
+
+    sslv2 = Column("sslv2", Boolean(),
+                   nullable=True)
+    sslv3 = Column("sslv3", Boolean(),
+                   nullable=True)
+    tlsv1 = Column("tlsv1", Boolean(),
+                   nullable=True)
+    tlsv1_1 = Column("tlsv1_1", Boolean(),
+                     nullable=True)
+    tlsv1_2 = Column("tlsv1_2", Boolean(),
+                     nullable=True)
+    tlsv1_3 = Column("tlsv1_3", Boolean(),
+                     nullable=True)
+
+    server_cipher_order = Column("server_cipher_order", Boolean(),
+                                 nullable=True)
+
+
+class Certificate(Base):
+    __tablename__ = "certificate"
+
+    id_ = Column(
+        "id",
+        Integer(),
+        primary_key=True,
+        nullable=False,
+        # TODO: something non-auto-increment maybe?
+        autoincrement=True,
+    )
+
+    fingerprint_sha1 = Column(
+        "fp_sha1",
+        sqlalchemy.types.VARBINARY(20),
+        nullable=False,
+    )
+
+    fingerprint_sha256 = Column(
+        "fp_sha256",
+        sqlalchemy.types.VARBINARY(32),
+        nullable=False,
+    )
+
+    fingerprint_sha512 = Column(
+        "fp_sha512",
+        sqlalchemy.types.VARBINARY(64),
+        nullable=False,
+    )
+
+    raw_der = Column(
+        "raw_der",
+        sqlalchemy.types.VARBINARY(8192),
+        nullable=False,
+    )
+
+    not_before = Column(
+        "not_before",
+        DateTime(),
+        nullable=False,
+    )
+
+    not_after = Column(
+        "not_after",
+        DateTime(),
+        nullable=False,
+    )
+
+    public_key = Column(
+        "public_key",
+        sqlalchemy.types.VARBINARY(2048),
+        nullable=False,
+    )
+
+    public_key_type = Column(
+        "public_key_type",
+        Unicode(128),
+        nullable=False,
+    )
+
+    subject = Column(
+        "subject",
+        Unicode(1024),
+        nullable=False,
+    )
+
+    issuer = Column(
+        "issuer",
+        Unicode(1024),
+        nullable=False,
+    )
+
+
+class SubjectAltName(Base):
+    __tablename__ = "san"
+
+    # cannot use cert_id + asn1_name as PK because a cert may have multiple
+    # SANs of the same type
+    id_ = Column(
+        "id",
+        Integer(),
+        autoincrement=True,
+        primary_key=True,
+        nullable=False,
+    )
+
+    certificate_id = Column(
+        "certificate_id",
+        Integer(),
+        ForeignKey(Certificate.id_, ondelete="CASCADE", onupdate="CASCADE"),
+        nullable=False,
+    )
+
+    type_id = Column(
+        "type_id",
+        Integer,
+        ForeignKey(SubjectAltNameType.id_,
+                   ondelete="RESTRICT", onupdate="CASCADE"),
+        nullable=False,
+    )
+
+    value = Column(
+        "value",
+        Unicode(256),
+        nullable=False,
+    )
+
+    certificate = relationship(Certificate)
+    type_ = relationship(SubjectAltNameType)
+
+
+class CertificateOffering(Base):
+    __tablename__ = "certificate_offering"
+
+    endpoint_id = Column(
+        "endpoint_id",
+        Integer(),
+        ForeignKey(Endpoint.id_, ondelete="CASCADE", onupdate="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    )
+
+    chain_index = Column(
+        "chain_index",
+        Integer(),
+        primary_key=True,
+        nullable=False,
+    )
+
+    certificate_id = Column(
+        "certificate_id",
+        Integer(),
+        ForeignKey(Certificate.id_, ondelete="CASCADE", onupdate="CASCADE"),
+        nullable=False,
+    )
+
+    certificate = relationship(Certificate)
+
+
+class CipherOffering(Base):
+    __tablename__ = "cipher_offering"
+
+    endpoint_id = Column(
+        "endpoint_id",
+        Integer(),
+        ForeignKey(Endpoint.id_, ondelete="CASCADE", onupdate="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    )
+
+    cipher_id = Column(
+        "cipher_id",
+        Integer(),
+        ForeignKey(CipherMetadata.id_,
+                   onupdate="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    )
+
+    key_exchange_info = Column(
+        "key_exchange_info",
+        Unicode(127),
+        nullable=True,
+    )
+
+
+class CipherOfferingOrder(Base):
+    __tablename__ = "cipher_offering_order"
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["endpoint_id", "cipher_id"],
+            ["cipher_offering.endpoint_id", "cipher_offering.cipher_id"]
+        ),
+    )
+
+    endpoint_id = Column(
+        "endpoint_id",
+        Integer(),
+        primary_key=True,
+        nullable=False,
+    )
+
+    cipher_id = Column(
+        "cipher_id",
+        Integer(),
+        primary_key=True,
+        nullable=False,
+    )
+
+    tls_version = Column(
+        "tls_version",
+        Unicode(32),
+        primary_key=True,
+        nullable=False,
+    )
+
+    order = Column(
+        "order",
+        Integer(),
+        nullable=False,
+    )
+
+
+class ScanTask(Base):
+    __tablename__ = "scan_task"
+
+    id_ = Column(
+        "id",
+        sqlalchemy.types.BINARY(16),
+        primary_key=True,
+        nullable=False,
     )
 
     scan_id = Column(
@@ -472,17 +837,26 @@ class PendingScanTask(Base):
         nullable=False,
     )
 
-    parameters = Column(
-        "parameters",
-        sqlalchemy.types.VARCHAR(2047),
+    state = Column(
+        "state",
+        SimpleEnum(TaskState),
         nullable=False,
     )
 
-    assigned_worker = Column(
-        "assigned_worker",
-        Unicode(128),
-        nullable=False,
+    fail_reason = Column(
+        "fail_reason",
+        SimpleEnum(FailReason),
+        nullable=True,
     )
+
+    endpoint_id = Column(
+        "endpoint_id",
+        Integer(),
+        ForeignKey(Endpoint.id_, ondelete="CASCADE", onupdate="CASCADE"),
+        nullable=True,
+    )
+
+    endpoint = relationship(Endpoint)
 
     heartbeat = Column(
         "heartbeat",
@@ -490,44 +864,72 @@ class PendingScanTask(Base):
         nullable=True,
     )
 
+    assigned_worker = Column(
+        "assigned_worker",
+        sqlalchemy.types.BINARY(16),
+        nullable=True,
+    )
+
+    @classmethod
+    def available_tasks(cls, session, cutoff: typing.Optional[datetime]):
+        q = session.query(
+            cls
+        ).outerjoin(
+            ScanTaskDependency,
+            ScanTaskDependency.child_task_id == cls.id_,
+        ).filter(
+            ScanTaskDependency.parent_task_id == None,  # NOQA
+            cls.state != TaskState.FAILED,
+            cls.state != TaskState.DONE,
+        )
+        if cutoff is not None:
+            q = q.filter(sqlalchemy.or_(
+                cls.heartbeat == None,  # NOQA
+                cls.heartbeat < cutoff,
+            ))
+        return q
+
+    def mark_completed(self, session, state=TaskState.DONE):
+        self.state = TaskState.DONE
+        session.query(ScanTaskDependency).filter(
+            ScanTaskDependency.parent_task_id == self.id_
+        ).delete()
+
+
+class ScanTaskDependency(Base):
+    __tablename__ = "scan_task_dependency"
+
+    parent_task_id = Column(
+        "parent_task_id",
+        Integer(),
+        ForeignKey("scan_task.id", ondelete="CASCADE", onupdate="CASCADE"),
+        primary_key=True,
+    )
+
+    child_task_id = Column(
+        "child_task_id",
+        Integer(),
+        ForeignKey("scan_task.id", ondelete="CASCADE", onupdate="CASCADE"),
+        primary_key=True,
+    )
+
+    parent_task = relationship(ScanTask, foreign_keys=parent_task_id)
+
+    child_task = relationship(ScanTask, foreign_keys=child_task_id)
+
 
 class EndpointScanResult(Base):
     __tablename__ = "endpoint_scan_result"
 
-    id_ = Column(
-        "id",
+    endpoint_id = Column(
+        "endpoint_id",
         Integer(),
+        ForeignKey(Endpoint.id_, ondelete="CASCADE", onupdate="CASCADE"),
+        nullable=False,
         primary_key=True,
-        nullable=False,
-        autoincrement=True,
     )
 
-    scan_id = Column(
-        "scan_id",
-        Integer(),
-        ForeignKey(Scan.id_, ondelete="CASCADE", onupdate="CASCADE"),
-        nullable=False,
-    )
-
-    scan = relationship(Scan)
-
-    hostname = Column(
-        "hostname",
-        sqlalchemy.types.VARCHAR(255),
-        nullable=False,
-    )
-
-    port = Column(
-        "port",
-        Integer(),
-        nullable=False,
-    )
-
-    tls_mode = Column(
-        "tls_mode",
-        SimpleEnum(TLSMode),
-        nullable=False,
-    )
+    endpoint = relationship(Endpoint)
 
     tls_offered = Column(
         "tls_offered",
@@ -566,31 +968,13 @@ class EndpointScanResult(Base):
     )
 
 
-class SASLMechanism(Base):
-    __tablename__ = "sasl_mechanism"
-
-    id_ = Column(
-        "id",
-        Integer(),
-        nullable=False,
-        primary_key=True,
-        autoincrement=True,
-    )
-
-    name = Column(
-        "name",
-        Unicode(20),
-        nullable=False,
-    )
-
-
 class EndpointScanSASLOffering(Base):
     __tablename__ = "endpoint_scan_sasl_offering"
 
-    endpoint_scan_result_id = Column(
+    endpoint_id = Column(
         "endpoint_scan_result_id",
         Integer(),
-        ForeignKey(EndpointScanResult.id_,
+        ForeignKey(EndpointScanResult.endpoint_id,
                    ondelete="CASCADE",
                    onupdate="CASCADE"),
         nullable=False,

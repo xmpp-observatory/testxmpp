@@ -129,6 +129,27 @@ span.cipher-id {
 	color: $gray-300;
 }
 
+ul.inline {
+	display: inline;
+	margin: 0;
+	padding: 0;
+	list-style-type: none;
+
+	> li {
+		display: inline;
+		margin: 0;
+		padding: 0;
+	}
+
+	> li:before {
+		content: ', ';
+	}
+
+	> li:first-child:before {
+		content: none;
+	}
+}
+
 /* a11y things */
 
 .a11y-text {

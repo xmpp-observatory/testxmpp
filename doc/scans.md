@@ -5,6 +5,13 @@
     - Check for CNAMEs
     - Check if all endpoints have the advertised ports open
 
+- A/AAAA fallback test (c2s only)
+
+    - Check if :5222 is open and responds to XMPP correctly, to handle weird
+      DNS problems
+
+- _xmppconnect TXT check, also the .well-known thing
+
 - TLSA Record Discovery on all endpoints
 - TLS Scan: classic testssl.sh
 - Trust Check: Validate certificate chain against trust stores
@@ -12,14 +19,14 @@
 - Stream Features:
 
     - Scrape SASL pre- and post-TLS
-    - With client certificate for s2s to allow discovery of EXTERNAL
-    - Maybe even post-Auth if EXTERNAL is possible
+    - With client certificate to allow discovery of EXTERNAL (s2s only)
+    - Maybe even post-Auth if EXTERNAL is possible (s2s only)
 
-- Ping Check:
+- Ping Check (s2s only):
 
     - Use two or three accounts to ping
 
-- TLS tolerance checks:
+- TLS tolerance checks (s2s only):
 
     - Use badxmpp-style stuff and see if pings pass
 

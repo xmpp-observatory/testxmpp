@@ -1,0 +1,48 @@
+version: '3'
+
+services:
+  testssl:
+    image: testxmpp/testssl:latest
+    build:
+      context: .
+      dockerfile: docker/testssl.Dockerfile
+    network_mode: host
+    command:
+    - "-vvv"
+    environment:
+      TESTXMPP_COORDINATOR_URI: "tcp://127.0.0.1:5001"
+  coordinator:
+    image: testxmpp/coordinator:latest
+    build:
+      context: .
+      dockerfile: docker/coordinator.Dockerfile
+    user: "1000"
+    network_mode: host
+    command:
+    - "-vvv"
+    environment:
+      TESTXMPP_DB_URI: sqlite:////tmp/src/test.sqlite
+    volumes:
+    - "./:/tmp/src/"
+  xmpp:
+    image: testxmpp/xmpp:latest
+    build:
+      context: .
+      dockerfile: docker/xmpp.Dockerfile
+    network_mode: host
+    command:
+    - "-vvv"
+    environment:
+      TESTXMPP_COORDINATOR_URI: "tcp://127.0.0.1:5001"
+      TESTXMPP_S2S_FROM: tbd.dreckshal.de
+  web:
+    image: testxmpp/web:latest
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+    network_mode: host
+    environment:
+      TESTXMPP_COORDINATOR_URI: "tcp://127.0.0.1:5001"
+      TESTXMPP_DB_URI: sqlite:////tmp/src/test.sqlite
+    volumes:
+    - "./:/tmp/src/"

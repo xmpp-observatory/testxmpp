@@ -1,7 +1,7 @@
 {% extends "_base.html" %}
 {% from "_library.html" import connection_phase, badge, tls_mode_name %}
 {% block body %}
-<h1>Scan result #{{ scan_id }}</h1>
+<h1>{% trans %}Scan result #{{ scan_id }}{% endtrans %}</h1>
 <dl>
 	<div class="di">
 		<dt>Domain</dt>
@@ -16,86 +16,144 @@
 		<dd>{{ scan_info.protocol.value }}</dd>
 	</div>
 </dl>
-<h2>DNS</h2>
+<h2>Endpoint discovery</h2>
 <h3>SRV records</h3>
-{% for service, records in srv_records | dictsort %}
-<h4>{{ service }}</h4>
-<table class="wide{% if records | length > 3 %} long{% endif %}">
-	<col class="numeric">
+{% if srv_records %}
+<table class="wide">
 	<thead>
 		<tr>
 			<th><abbr title="Priority">P</abbr></th>
 			<th><abbr title="Weight">W</abbr></th>
-			<th>Target</th>
+			<th>Service</th>
+			<th>Host</th>
 			<th>Port</th>
 		</tr>
 	</thead>
 	<tbody>
-{% for priority, weight, target, port in records %}
+{% for prio, weight, service, host, port in srv_records %}
 		<tr>
-			<td>{{ priority }}</td>
-			<td>{{ weight }}</td>
-			<td>{{ target }}</td>
-			<td>{{ port }}</td>
+			<td class="numeric">{{ prio }}</td>
+			<td class="numeric">{{ weight }}</td>
+			<td>{{ service }}</td>
+			<td>{{ host | decode_domain }}</td>
+			<td class="numeric">{{ port }}</td>
 		</tr>
 {% endfor %}
 	</tbody>
 </table>
-{% endfor %}
-
-<h2>Endpoints</h2>
-<table>
+{% else %}
+<p>{% trans %}No valid records found.{% endtrans %}</p>
+{% endif %}
+<h3><tt>_xmppconnect</tt> TXT records</h3>
+{% if xmppconnect_records %}
+<table class="wide">
 	<thead>
 		<tr>
-			<th>Hostname</th>
-			<th>Port</th>
-			<th>TLS mode</th>
-			<th>Source</th>
-			<th>Result</th>
+			<th>Name</th>
+			<th>Value</th>
 		</tr>
 	</thead>
 	<tbody>
-{% for hostname, port, tls_mode, complete, result, error in endpoints %}
+{% for name, value in xmppconnect_records %}
 		<tr>
-			<td>{{ hostname }}</td>
-			<td>{{ port }}</td>
-			<td>{{ tls_mode_name(tls_mode) }}</td>
-			<td>TBD</td>
+			<td>{{ name | printable_bytes }}</td>
+			<td>{{ value | printable_bytes }}</td>
+		</tr>
+{% endfor %}
+	</tbody>
+</table>
+{% else %}
+<p>{% trans %}No valid records found.{% endtrans %}</p>
+{% endif %}
+<h3><tt>host-meta</tt></h3>
+{% if host_meta_object_info %}
+<dl>
+{% for format_, url in host_meta_object_info %}
+	<div class="di">
+		<dt>{{ format_.value }}</dt>
+		<dt><a href="{{ url }}">{{ url }}</a></dt>
+	</div>
+{% endfor %}
+</dl>
+{% if host_meta_links %}
+<table class="wide">
+	<thead>
+		<tr>
+			<th>Type</th>
+			<th>URL</th>
+			<th>Formats</th>
+		</tr>
+	</thead>
+	<tbody>
+{% for rel, href, formats in host_meta_links %}
+		<tr>
+			<td>{{ rel }}</td>
+			<td>{{ href }}</td>
+			<td><ul class="inline">
+				{%- for format_ in formats -%}
+					<li>{{ format_.value }}</li>
+				{%- endfor -%}
+			</ul></td>
+		</tr>
+{% endfor %}
+	</tbody>
+</table>
+{% else %}
+<p>{% trans %}No object contained any valid links.{% endtrans %}</p>
+{% endif %}
+{% else %}
+<p>{% trans %}No valid host-meta objects found.{% endtrans %}</p>
+{% endif %}
+<h2>Endpoints</h2>
+<table class="wide">
+	<thead>
+		<tr>
+			<th>Origin</th>
+			<th>Transport</th>
+			<th>URI</th>
+			<th>Mode</th>
+			<th>Status</th>
+		</tr>
+	</thead>
+	<tbody>
+{% for source, transport, uri, mode, (in_progress, passed, error) in endpoints %}
+		<tr>
+			<td>{{ source }}</td>
+			<td>{{ transport }}</td>
+			<td>{{ uri }}</td>
+			<td>{{ mode }}</td>
 			<td>
-			{%- if complete -%}
-			{%- if result -%}
-			{% call badge("success") %}{% trans %}Passed{% endtrans %}{% endcall %}
-			{%- else -%}
-			{% call badge("error", title=error) %}{% trans %}Failed{% endtrans %}{% endcall %}
-			{%- endif -%}
-			{%- else -%}
-			{% call badge("gray") %}{% trans %}In progress{% endtrans %}{% endcall%}
-			{%- endif -%}
+				{%- if in_progress -%}
+				{% call badge("gray") %}{% trans %}In progress{% endtrans %}{% endcall %}
+				{%- else -%}
+				{%- if passed -%}
+				{% call badge("success") %}{% trans %}Passed{% endtrans %}{% endcall %}
+				{%- else -%}
+				{% call badge("error", title=error) %}{% trans %}Error{% endtrans %}{% endcall %}
+				{%- endif -%}
+				{%- endif -%}
+			</td>
 		</tr>
 {% endfor %}
 	</tbody>
 </table>
 
 <h2>Authentication</h2>
-{% for phase in ["pre-tls", "post-tls"] %}
-<h3>{{ connection_phase(phase) }}</h3>
-{% set mechanisms = (sasl_offerings[phase] | default([])) %}
-{% if not mechanisms %}
-{% trans %}No SASL mechanisms offered.{% endtrans %}
-{% else %}
+{% for phase, mechanisms in sasl_offerings.items() %}
+<h3>{{ phase }}</h3>
+{% if mechanisms %}
 <ul>
-{% for mech in mechanisms %}
-	<li>{{ mech }}</li>
+{% for mechanism in mechanisms %}
+	<li>{{ mechanism }}</li>
 {% endfor %}
 </ul>
+{% else %}
+<p>{% trans %}No SASL mechanisms offered.{% endtrans %}</p>
 {% endif %}
 {% endfor %}
 
 <h2>TLS</h2>
-{% if tls_pending %}<p><strong>Note:</strong> Scan still in progress</p>{% endif %}
-{% if scan_info.host %}
-<p>Scan is executed against {{ scan_info.host }}:{{ scan_info.port }} using {{ scan_info.tls_mode }}.</p>
-{% endif %}
+<p>The TLS scan was executed against {{ tls_scan_uri }}.</p>
 <h3>Versions</h3>
 <table>
 	<thead>
@@ -113,6 +171,37 @@
 {% endfor %}
 	</tbody>
 </table>
+<h3>Certificate Chain</h3>
+<ol>
+{% for cert in cert_chain %}
+	<li>
+		<dl>
+			<div class="di">
+				<dt>Subject</dt>
+				<dd>{{ cert.subject }}</dd>
+			</div>
+			<div class="di">
+				<dt>Issuer</dt>
+				<dd>{{ cert.issuer }}</dd>
+			</div>
+			<div class="di">
+				<dt>Valid from</dt>
+				<dd>{{ cert.not_before }}</dd>
+			</div>
+			<div class="di">
+				<dt>Valid until</dt>
+				<dd>{{ cert.not_after }}</dd>
+			</div>
+			{% for algo in cert.fingerprints %}
+			<div class="di">
+				<dt>{{ algo }} Fingerprint</dt>
+				<dd>{{ cert.fingerprints[algo] | hexdigest }}</dd>
+			</div>
+			{% endfor %}
+		</dl>
+	</li>
+{% endfor %}
+</ol>
 <h3>Ciphers</h3>
 <dl>
 	<dt>Cipher order</dt>

@@ -1,4 +1,5 @@
 import asyncio
+import binascii
 import json
 import logging
 import random
@@ -20,16 +21,35 @@ import aioxmpp
 from testxmpp import model
 from testxmpp.common import RequestProcessor
 import testxmpp.dns
+import testxmpp.coordinator.endpoints
+import testxmpp.coordinator.testssl
 import testxmpp.api.common as common_api
 import testxmpp.api.coordinator as coordinator_api
 
 from . import tasks
+from .common import generate_task_id
 
 
 logger = logging.getLogger(__name__)
 
 
 HEARTBEAT_THRESOHLD = timedelta(minutes=1)
+
+
+def encode_task_id(id_: bytes) -> str:
+    return binascii.b2a_hex(id_).decode("ascii")
+
+
+def decode_task_id(id_: str) -> bytes:
+    return binascii.a2b_hex(id_)
+
+
+def encode_worker_id(id_: bytes) -> str:
+    return binascii.b2a_hex(id_).decode("ascii")
+
+
+def decode_worker_id(id_: str) -> bytes:
+    return binascii.a2b_hex(id_)
 
 
 class ExponentialBackOff:
@@ -129,19 +149,6 @@ class RestartingTask:
             self._task.cancel()
 
 
-async def gather_srv_records(domain, services):
-    domain = testxmpp.dns.encode_domain(domain)
-    for service in services:
-        try:
-            records = await testxmpp.dns.lookup_srv(domain, "tcp", service,
-                                                    raise_on_no_answer=False)
-        except dns.resolver.NXDOMAIN:
-            continue
-
-        for record in records:
-            yield (service, record)
-
-
 def normalize_domain(domain: str) -> bytes:
     """
     Normalize and encode a string containing a domain name for matching
@@ -185,28 +192,47 @@ def normalize_domain(domain: str) -> bytes:
     return aioxmpp.stringprep.nameprep(domain).encode("idna")
 
 
-def get_or_create_sasl_mechanism(session, name: str):
+def get_or_create_sasl_mechanism(
+        session,
+        name: str,
+        *,
+        cache: typing.Optional[
+            typing.MutableMapping[str, model.SASLMechanism]
+        ] = None):
+    if cache is not None:
+        try:
+            return cache[name]
+        except KeyError:
+            pass
+
     try:
-        return session.query(model.SASLMechanism).filter(
+        result = session.query(model.SASLMechanism).filter(
             model.SASLMechanism.name == name,
         ).one()
     except sqlalchemy.orm.exc.NoResultFound:
-        mech = model.SASLMechanism()
-        mech.name = name
-        session.add(mech)
-        return mech
+        result = model.SASLMechanism()
+        result.name = name
+        session.add(result)
+    if cache is not None:
+        cache[name] = result
+    return result
 
 
 def add_sasl_mechanisms(session,
                         phase: model.ConnectionPhase,
                         mechanisms: typing.List[str],
-                        result: model.EndpointScanResult):
+                        result: model.EndpointScanResult,
+                        sasl_mechanism_cache: typing.MutableMapping[
+                            str, model.SASLMechanism,
+                        ],
+                        ):
     for mech in mechanisms:
         entry = model.EndpointScanSASLOffering()
         entry.endpoint_scan_result = result
         entry.phase = phase
         entry.sasl_mechanism = get_or_create_sasl_mechanism(
             session, mech,
+            cache=sasl_mechanism_cache,
         )
         session.add(entry)
 
@@ -235,300 +261,94 @@ class CoordinatorRequestProcessor(RequestProcessor):
 
     async def _discover_endpoints(self, task_id):
         with model.session_scope(self._sessionmaker) as session:
-            task = session.query(model.PendingScanTask).filter(
-                model.PendingScanTask.id_ == task_id
+            task = session.query(model.ScanTask).filter(
+                model.ScanTask.id_ == task_id
             ).one()
             scan = task.scan
             scan_id = scan.id_
             scan_domain = scan.domain
             scan_protocol = scan.protocol
 
-        srv_services = {
-            model.ScanType.C2S: ["xmpp-client", "xmpps-client"],
-            model.ScanType.S2S: ["xmpp-server", "xmpps-server"],
-        }[scan_protocol]
-
-        db_records = []
-        async for service, record in gather_srv_records(scan_domain,
-                                                        srv_services):
-            db_record = model.SRVRecord()
-            db_record.scan_id = scan_id
-            db_record.service = service
-            db_record.protocol = "tcp"
-            db_record.weight = record.weight
-            db_record.port = record.port
-            db_record.priority = record.priority
-            db_record.host = record.target.to_text().encode("ascii")
-            db_records.append(db_record)
-
-        if db_records:
-            db_records.sort(key=lambda x: (x.priority, -x.weight))
-            primary_record = db_records[0]
-            if primary_record.service in ["xmpps-server", "xmpps-client"]:
-                primary_tls_mode = model.TLSMode.DIRECT
-            else:
-                primary_tls_mode = model.TLSMode.STARTTLS
-            primary_host = primary_record.host
-            primary_port = primary_record.port
-        else:
-            # fallback to A/AAAA for endpoint selection
-            primary_host = scan_domain
-            primary_port = {
-                model.ScanType.C2S: 5222,
-                model.ScanType.S2S: 5269,
-            }[scan_protocol]
-            primary_tls_mode = model.TLSMode.STARTTLS
+        db_objects = await testxmpp.coordinator.endpoints.discover_endpoints(
+            scan_id,
+            scan_domain,
+            scan_protocol,
+        )
 
         with model.session_scope(self._sessionmaker) as session:
-            taskq = session.query(model.PendingScanTask).filter(
-                model.PendingScanTask.id_ == task_id
+            taskq = session.query(model.ScanTask).filter(
+                model.ScanTask.id_ == task_id
             )
             try:
                 task = taskq.one()
             except sqlalchemy.orm.exc.NoResultFound:
                 # task has been done by another worker already.
                 return
+            task.mark_completed(session)
 
-            taskq.delete()
-
-            scan = session.query(model.Scan).filter(
-                model.Scan.id_ == task.scan_id,
-            ).one()
-            scan.primary_host = primary_host
-            scan.primary_port = primary_port
-            scan.primary_tls_mode = primary_tls_mode
-
-            session.query(model.SRVRecord).filter(
-                model.SRVRecord.scan_id == scan_id,
+            # delete possibly pre-existing tasks
+            session.query(model.ScanTask).filter(
+                model.ScanTask.type_ == model.TaskType.XMPP_PROBE
+            ).delete()
+            session.query(model.ScanTask).filter(
+                model.ScanTask.type_ == model.TaskType.SELECT_ENDPOINTS
             ).delete()
 
-            for db_record in db_records:
-                session.add(db_record)
-
-            tls_task = model.PendingScanTask()
-            tls_task.scan_id = scan_id
-            tls_task.type_ = model.TaskType.TLS_SCAN
-            tls_task.parameters = '{}'
-            session.add(tls_task)
-
-            probe_task = model.PendingScanTask()
-            probe_task.scan_id = scan_id
-            probe_task.type_ = model.TaskType.XMPP_PROBE
-            probe_task.parameters = json.dumps(
-                {
-                    "hostname": scan_domain.decode("ascii"),
-                    "port": {
-                        model.ScanType.C2S: 5222,
-                        model.ScanType.S2S: 5269,
-                    }[scan_protocol],
-                    "tls_mode": "starttls",
-                    "protocol": scan_protocol.value,
-                }
+            # delete endpoints if there exist any
+            # this is to handle parallel executions of the same task
+            # gracefully
+            session.query(model.Endpoint).filter(
+                model.Endpoint.scan_id == task.scan_id,
             )
-            session.add(probe_task)
 
-            for db_record in db_records:
-                probe_task = model.PendingScanTask()
-                probe_task.scan_id = scan_id
-                probe_task.type_ = model.TaskType.XMPP_PROBE
-                probe_task.parameters = json.dumps(
-                    {
-                        "hostname": db_record.host.decode("ascii"),
-                        "port": db_record.port,
-                        "tls_mode": {
-                            "xmpp-client": "starttls",
-                            "xmpp-server": "starttls",
-                            "xmpps-client": "direct",
-                            "xmpps-server": "direct",
-                        }[db_record.service],
-                        "protocol": scan_protocol.value,
-                    }
-                )
-                session.add(probe_task)
+            selection_task = model.ScanTask()
+            selection_task.id_ = generate_task_id()
+            selection_task.scan_id = task.scan_id
+            selection_task.type_ = model.TaskType.SELECT_ENDPOINTS
+            selection_task.state = model.TaskState.WAITING
+            session.add(selection_task)
+
+            def add_task(task):
+                # XXX: this needs to go if/when we support http probes
+                if task.state == model.TaskState.WAITING:
+                    dep = model.ScanTaskDependency()
+                    dep.parent_task = task
+                    dep.child_task = selection_task
+                    session.add(task)
+                session.add(dep)
+
+            for obj in db_objects:
+                session.add(obj)
+                if isinstance(obj, model.EndpointTCP):
+                    scan_task = model.ScanTask()
+                    scan_task.id_ = generate_task_id()
+                    scan_task.scan_id = task.scan_id
+                    scan_task.endpoint = obj
+                    scan_task.type_ = model.TaskType.XMPP_PROBE
+                    scan_task.state = model.TaskState.WAITING
+                    add_task(scan_task)
+                elif isinstance(obj, model.EndpointHTTP):
+                    scan_task = model.ScanTask()
+                    scan_task.id_ = generate_task_id()
+                    scan_task.scan_id = task.scan_id
+                    scan_task.endpoint = obj
+                    scan_task.type_ = model.TaskType.XMPP_PROBE
+                    scan_task.state = model.TaskState.FAILED
+                    scan_task.fail_reason = model.FailReason.UNSUPPORTED
+                    add_task(scan_task)
 
             session.commit()
-
-    async def _discover_tlsa(self, task_id):
-        with model.session_scope(self._sessionmaker) as session:
-            taskq = session.query(model.PendingScanTask).filter(
-                model.PendingScanTask.id_ == task_id
-            )
-            try:
-                task = taskq.one()
-            except sqlalchemy.orm.exc.NoResultFound:
-                # task has been done by another worker already.
-                return
-
-            taskq.delete()
-            session.commit()
-
-    def _get_or_create_tls_offering(self, session, scan_id):
-        try:
-            return session.query(model.TLSOffering).filter(
-                model.TLSOffering.scan_id == scan_id,
-            ).one()
-        except sqlalchemy.orm.exc.NoResultFound:
-            tls_offering = model.TLSOffering()
-            tls_offering.scan_id = scan_id
-            session.add(tls_offering)
-            return tls_offering
-
-    def _get_or_create_certificate(self, session, scan_id):
-        try:
-            return session.query(model.Certificate).filter(
-                model.Certificate.scan_id == scan_id,
-            ).one()
-        except sqlalchemy.orm.exc.NoResultFound:
-            cert = model.Certificate()
-            cert.scan_id = scan_id
-            session.add(cert)
-            return cert
-
-    def _lookup_cipher_id_by_name(self, session, openssl_name):
-        result = session.query(model.CipherMetadata.id_).filter(
-            model.CipherMetadata.openssl_name == openssl_name
-        ).one_or_none()
-        if result is None:
-            return None
-        return result[0]
-
-    def _upsert_cipher_metadata(self, session, cipher_id,
-                                openssl_name, iana_name):
-        try:
-            metadata = session.query(model.CipherMetadata).filter(
-                model.CipherMetadata.id_ == cipher_id,
-            ).one()
-        except sqlalchemy.orm.exc.NoResultFound:
-            metadata = model.CipherMetadata()
-            metadata.id_ = cipher_id
-            session.add(metadata)
-
-        if openssl_name and metadata.openssl_name != openssl_name:
-            metadata.openssl_name = openssl_name
-        if iana_name and metadata.iana_name != iana_name:
-            metadata.iana_name = iana_name
-        return metadata
-
-    def _upsert_cipher_offering_order(self, session, scan_id, cipher_id,
-                                      tls_version, order):
-        try:
-            offering_order = session.query(model.CipherOfferingOrder).filter(
-                model.CipherOfferingOrder.scan_id == scan_id,
-                model.CipherOfferingOrder.cipher_id == cipher_id,
-                model.CipherOfferingOrder.tls_version == tls_version,
-            ).one()
-        except sqlalchemy.orm.exc.NoResultFound:
-            offering_order = model.CipherOfferingOrder()
-            offering_order.scan_id = scan_id
-            offering_order.cipher_id = cipher_id
-            offering_order.tls_version = tls_version
-            session.add(offering_order)
-
-        if offering_order.order != order:
-            offering_order.order = order
-        return offering_order
-
-    def _get_or_create_cipher_offering(self, session, scan_id, cipher_id):
-        try:
-            return session.query(model.CipherOffering).filter(
-                model.CipherOffering.scan_id == scan_id,
-                model.CipherOffering.cipher_id == cipher_id,
-            ).one()
-        except sqlalchemy.orm.exc.NoResultFound:
-            cipher_offering = model.CipherOffering()
-            cipher_offering.scan_id = scan_id
-            cipher_offering.cipher_id = cipher_id
-            session.add(cipher_offering)
-            return cipher_offering
-
-    def _handle_testssl_tls_versions_push(
-            self,
-            session, scan_id, data) -> bool:
-        tls_offering = self._get_or_create_tls_offering(session, scan_id)
-
-        # no generic/procedural mapping here to avoid the worker being able to
-        # manipulate arbitrary attributes of the object.
-        keymap = {
-            "SSLv2": "sslv2",
-            "SSLv3": "sslv3",
-            "TLSv1": "tlsv1",
-            "TLSv1.1": "tlsv1_1",
-            "TLSv1.2": "tlsv1_2",
-            "TLSv1.3": "tlsv1_3",
-        }
-
-        for k, v in data["tls_versions"].items():
-            setattr(tls_offering, keymap[k], bool(v))
-
-        return True
-
-    def _handle_testssl_cipherlists_push(
-            self,
-            session, scan_id, data) -> bool:
-        # we ignore this push, because we need to access the cipher lists
-        # based on the cipher ID, but we only get the OpenSSL name here.
-        return True
-
-    def _handle_testssl_cipherlists_complete(
-            self,
-            session, scan_id, data) -> bool:
-        for tls_version, ciphers in data.items():
-            for order, openssl_name in enumerate(ciphers):
-                cipher_id = self._lookup_cipher_id_by_name(
-                    session, openssl_name,
-                )
-                if cipher_id is None:
-                    # ???
-                    continue
-                cipher_offering = self._get_or_create_cipher_offering(
-                    session, scan_id, cipher_id
-                )
-                self._upsert_cipher_offering_order(
-                    session, scan_id, cipher_id, tls_version, order,
-                )
-        return True
-
-    def _handle_testssl_server_cipher_order_push(
-            self,
-            session, scan_id, data) -> bool:
-        tls_offering = self._get_or_create_tls_offering(session, scan_id)
-        tls_offering.server_cipher_order = data["server_cipher_order"]
-        return True
-
-    def _handle_testssl_cipher_info_push(
-            self,
-            session, scan_id, data) -> bool:
-        data = data["cipher"]
-        cipher_metadata = self._upsert_cipher_metadata(
-            session,
-            data["id"],
-            data["openssl_name"],
-            data["iana_name"],
-        )
-        cipher_offering = self._get_or_create_cipher_offering(
-            session,
-            scan_id,
-            data["id"],
-        )
-        cipher_offering.key_exchange_info = data["key_exchange"] or None
-        return True
-
-    def _handle_testssl_certificate_push(
-            self,
-            session, scan_id, data) -> bool:
-        certificate = self._get_or_create_certificate(session, scan_id)
-        certificate.leaf_certificate = data["certificate"]
-        return True
 
     def _handle_testssl_push(self, worker_id, job_id, testssl_data) -> bool:
         data_type = testssl_data["type"]
+        testssl = testxmpp.coordinator.testssl
         handler = {
-            "tls_versions": self._handle_testssl_tls_versions_push,
-            "cipherlists": self._handle_testssl_cipherlists_push,
-            "server_cipher_order":
-                self._handle_testssl_server_cipher_order_push,
-            "cipher_info": self._handle_testssl_cipher_info_push,
-            "certificate": self._handle_testssl_certificate_push,
+            "tls_versions": testssl.handle_tls_versions_push,
+            "cipherlists": testssl.handle_cipherlists_push,
+            "server_cipher_order": testssl.handle_server_cipher_order_push,
+            "cipher_info": testssl.handle_cipher_info_push,
+            "certificate": testssl.handle_certificate_push,
+            "intermediate_certificate": testssl.handle_certificate_push,
         }.get(data_type, None)
         if handler is None:
             raise RuntimeError("unhandled testssl push data type: {!r}".format(
@@ -537,8 +357,8 @@ class CoordinatorRequestProcessor(RequestProcessor):
 
         with model.session_scope(self._sessionmaker) as session:
             try:
-                task = session.query(model.PendingScanTask).filter(
-                    model.PendingScanTask.id_ == job_id,
+                task = session.query(model.ScanTask).filter(
+                    model.ScanTask.id_ == job_id,
                 ).one()
             except sqlalchemy.orm.exc.NoResultFound:
                 return False
@@ -547,7 +367,7 @@ class CoordinatorRequestProcessor(RequestProcessor):
                 # late worker?
                 return False
 
-            if not handler(session, task.scan_id, testssl_data):
+            if not handler(session, task.endpoint_id, testssl_data):
                 # allow immediate rescheduling of the task
                 task.heartbeat = None
                 return False
@@ -558,10 +378,11 @@ class CoordinatorRequestProcessor(RequestProcessor):
         return True
 
     def _handle_testssl_result(self, worker_id, job_id, result):
+        testssl = testxmpp.coordinator.testssl
         with model.session_scope(self._sessionmaker) as session:
             try:
-                task = session.query(model.PendingScanTask).filter(
-                    model.PendingScanTask.id_ == job_id,
+                task = session.query(model.ScanTask).filter(
+                    model.ScanTask.id_ == job_id,
                 ).one()
             except sqlalchemy.orm.exc.NoResultFound:
                 return
@@ -570,33 +391,37 @@ class CoordinatorRequestProcessor(RequestProcessor):
                 # late worker?
                 return
 
-            scan_id = task.scan_id
+            endpoint_id = task.endpoint_id
 
-            self._handle_testssl_tls_versions_push(
-                session, scan_id, result,
+            testssl.handle_tls_versions_push(
+                session, endpoint_id, result,
             )
-            self._handle_testssl_certificate_push(
-                session, scan_id, result,
+            testssl.handle_certificate_push(
+                session, endpoint_id, result,
             )
-            self._handle_testssl_server_cipher_order_push(
-                session, scan_id, result,
+            for intermediate in result["intermediate_certificates"]:
+                testssl.handle_certificate_push(
+                    session, endpoint_id, {"certificate": intermediate},
+                )
+            testssl.handle_server_cipher_order_push(
+                session, endpoint_id, result,
             )
             for cipher_info in result["ciphers"]:
-                self._handle_testssl_cipher_info_push(
-                    session, scan_id, {"cipher": cipher_info},
+                testssl.handle_cipher_info_push(
+                    session, endpoint_id, {"cipher": cipher_info},
                 )
-            self._handle_testssl_cipherlists_complete(
-                session, scan_id, result["cipherlists"],
+            testssl.handle_cipherlists_complete(
+                session, endpoint_id, result["cipherlists"],
             )
 
-            session.delete(task)
+            task.mark_completed(session)
             session.commit()
 
     async def _handle_xmpp_result(self, worker_id, job_id, result):
         with model.session_scope(self._sessionmaker) as session:
             try:
-                task = session.query(model.PendingScanTask).filter(
-                    model.PendingScanTask.id_ == job_id,
+                task = session.query(model.ScanTask).filter(
+                    model.ScanTask.id_ == job_id,
                 ).one()
             except sqlalchemy.orm.exc.NoResultFound:
                 return False
@@ -605,16 +430,15 @@ class CoordinatorRequestProcessor(RequestProcessor):
                 # late worker?
                 return False
 
-            session.delete(task)
+            task.mark_completed(session)
 
-            parameters = json.loads(task.parameters)
+            # This is needed to avoid conflicts when adding the same SASL
+            # mechanism pre- and post-TLS.
+            sasl_mech_cache = {}
 
             scan_id = task.scan_id
             endpoint_result = model.EndpointScanResult()
-            endpoint_result.scan_id = scan_id
-            endpoint_result.hostname = parameters["hostname"].encode("ascii")
-            endpoint_result.port = parameters["port"]
-            endpoint_result.tls_mode = model.TLSMode(parameters["tls_mode"])
+            endpoint_result.endpoint_id = task.endpoint_id
             endpoint_result.tls_offered = result["tls_offered"]
             endpoint_result.tls_negotiated = result["tls_negotiated"]
             endpoint_result.error = result["error"]
@@ -626,7 +450,8 @@ class CoordinatorRequestProcessor(RequestProcessor):
                 add_sasl_mechanisms(session,
                                     model.ConnectionPhase.PRE_TLS,
                                     result["pre_tls_sasl_mechanisms"],
-                                    endpoint_result)
+                                    endpoint_result,
+                                    sasl_mechanism_cache=sasl_mech_cache)
             else:
                 endpoint_result.sasl_pre_tls = False
 
@@ -635,13 +460,53 @@ class CoordinatorRequestProcessor(RequestProcessor):
                 add_sasl_mechanisms(session,
                                     model.ConnectionPhase.POST_TLS,
                                     result["post_tls_sasl_mechanisms"],
-                                    endpoint_result)
+                                    endpoint_result,
+                                    sasl_mechanism_cache=sasl_mech_cache)
             else:
                 endpoint_result.sasl_post_tls = False
 
             session.commit()
 
         return True
+
+    async def _select_endpoints(self, task_id):
+        with model.session_scope(self._sessionmaker) as session:
+            testxmpp.coordinator.endpoints.select_endpoints(session, task_id)
+            session.commit()
+
+    def _poll_local_tasks(self, session=None):
+        with model.session_scope(self._sessionmaker) as session:
+            open_tasks = model.ScanTask.available_tasks(session, None).filter(
+                sqlalchemy.or_(
+                    model.ScanTask.type_ == model.TaskType.DISCOVER_ENDPOINTS,
+                    model.ScanTask.type_ == model.TaskType.RESOLVE_TLSA,
+                    model.ScanTask.type_ == model.TaskType.SELECT_ENDPOINTS,
+                ),
+            )
+
+            task_handlers = {
+                model.TaskType.DISCOVER_ENDPOINTS: self._discover_endpoints,
+                model.TaskType.SELECT_ENDPOINTS: self._select_endpoints,
+            }
+
+            queue_items = []
+
+            now = datetime.utcnow()
+            for task in open_tasks:
+                task.heartbeat = now
+                queue_items.append((task_handlers[task.type_], task.id_))
+
+            session.commit()
+
+        for func, data in queue_items:
+            self._task_queue.push(func, data)
+
+    def _try_poll_local_tasks(self):
+        try:
+            self._poll_local_tasks()
+        except Exception as exc:
+            self.logger.error("failed to enqueue local tasks",
+                              exc_info=True)
 
     async def _handle_message(self, msg):
         logger.debug("_handle_message(%r)", msg)
@@ -695,34 +560,33 @@ class CoordinatorRequestProcessor(RequestProcessor):
                 scan.privileged = False
                 session.add(scan)
 
-                ep_task = model.PendingScanTask()
+                ep_task = model.ScanTask()
+                ep_task.id_ = generate_task_id()
                 ep_task.scan = scan
                 ep_task.type_ = model.TaskType.DISCOVER_ENDPOINTS
-                ep_task.parameters = "{}".encode("utf-8")
+                ep_task.state = model.TaskState.WAITING
                 session.add(ep_task)
 
                 session.commit()
-                self._task_queue.push(self._discover_endpoints, ep_task.id_)
-                return coordinator_api.mkv1response(
-                    coordinator_api.ResponseType.SCAN_QUEUED,
-                    {
-                        "scan_id": scan.id_,
-                    },
-                )
+                scan_id = scan.id_
+
+            self._try_poll_local_tasks()
+            return coordinator_api.mkv1response(
+                coordinator_api.ResponseType.SCAN_QUEUED,
+                {
+                    "scan_id": scan_id,
+                },
+            )
 
         elif msg["type"] == coordinator_api.RequestType.GET_TESTSSL_JOB.value:
             cutoff = datetime.utcnow() - HEARTBEAT_THRESOHLD
             worker_id = msg["payload"]["worker_id"]
 
             with model.session_scope(self._sessionmaker) as session:
-                task = session.query(model.PendingScanTask).filter(
-                    model.PendingScanTask.type_ == model.TaskType.TLS_SCAN,
-                    sqlalchemy.or_(
-                        model.PendingScanTask.heartbeat == None,  # NOQA
-                        model.PendingScanTask.heartbeat < cutoff,
-                    )
+                task = model.ScanTask.available_tasks(session, cutoff).filter(
+                    model.ScanTask.type_ == model.TaskType.TLS_SCAN,
                 ).order_by(
-                    model.PendingScanTask.heartbeat.asc()
+                    model.ScanTask.heartbeat.asc()
                 ).limit(1).one_or_none()
                 if task is None:
                     return coordinator_api.mkv1response(
@@ -734,15 +598,15 @@ class CoordinatorRequestProcessor(RequestProcessor):
 
                 scan = task.scan
                 job = {
-                    "job_id": str(task.id_),
+                    "job_id": encode_task_id(task.id_),
                     "domain": scan.domain.decode("utf-8"),
-                    "hostname": scan.primary_host.decode("ascii"),
-                    "port": scan.primary_port,
+                    "hostname": task.endpoint.hostname.decode("ascii"),
+                    "port": task.endpoint.port,
                     "protocol": scan.protocol.value,
-                    "tls_mode": scan.primary_tls_mode.value,
+                    "tls_mode": task.endpoint.tls_mode.value,
                 }
 
-                task.assigned_worker = worker_id
+                task.assigned_worker = decode_worker_id(worker_id)
                 task.heartbeat = datetime.utcnow()
                 session.commit()
 
@@ -753,17 +617,13 @@ class CoordinatorRequestProcessor(RequestProcessor):
 
         elif msg["type"] == coordinator_api.RequestType.GET_XMPP_JOB.value:
             cutoff = datetime.utcnow() - HEARTBEAT_THRESOHLD
-            worker_id = msg["payload"]["worker_id"]
+            worker_id = decode_worker_id(msg["payload"]["worker_id"])
 
             with model.session_scope(self._sessionmaker) as session:
-                task = session.query(model.PendingScanTask).filter(
-                    model.PendingScanTask.type_ == model.TaskType.XMPP_PROBE,
-                    sqlalchemy.or_(
-                        model.PendingScanTask.heartbeat == None,  # NOQA
-                        model.PendingScanTask.heartbeat < cutoff,
-                    )
+                task = model.ScanTask.available_tasks(session, cutoff).filter(
+                    model.ScanTask.type_ == model.TaskType.XMPP_PROBE,
                 ).order_by(
-                    model.PendingScanTask.heartbeat.asc()
+                    model.ScanTask.heartbeat.asc()
                 ).limit(1).one_or_none()
                 if task is None:
                     return coordinator_api.mkv1response(
@@ -777,10 +637,13 @@ class CoordinatorRequestProcessor(RequestProcessor):
                 job_description = {
                     "type": "features",
                     "domain": scan.domain.decode("utf-8"),
+                    "hostname": task.endpoint.hostname.decode("ascii"),
+                    "port": task.endpoint.port,
+                    "tls_mode": task.endpoint.tls_mode.value,
+                    "protocol": scan.protocol.value,
                 }
-                job_description.update(json.loads(task.parameters))
                 job = {
-                    "job_id": str(task.id_),
+                    "job_id": encode_task_id(task.id_),
                     "job": job_description,
                 }
 
@@ -794,8 +657,8 @@ class CoordinatorRequestProcessor(RequestProcessor):
                 )
 
         elif msg["type"] == coordinator_api.RequestType.TESTSSL_RESULT_PUSH.value:
-            job_id = int(msg["payload"]["job_id"])
-            worker_id = msg["payload"]["worker_id"]
+            job_id = decode_task_id(msg["payload"]["job_id"])
+            worker_id = decode_worker_id(msg["payload"]["worker_id"])
             data = msg["payload"]["testssl_data"]
 
             return coordinator_api.mkv1response(
@@ -808,8 +671,8 @@ class CoordinatorRequestProcessor(RequestProcessor):
             )
 
         elif msg["type"] == coordinator_api.RequestType.TESTSSL_COMPLETE.value:
-            job_id = int(msg["payload"]["job_id"])
-            worker_id = msg["payload"]["worker_id"]
+            job_id = decode_task_id(msg["payload"]["job_id"])
+            worker_id = decode_worker_id(msg["payload"]["worker_id"])
             result = msg["payload"]["testssl_result"]
 
             self._handle_testssl_result(
@@ -817,14 +680,16 @@ class CoordinatorRequestProcessor(RequestProcessor):
                 job_id,
                 result,
             )
+
+            self._try_poll_local_tasks()
             return coordinator_api.mkv1response(
                 coordinator_api.ResponseType.OK,
                 {}
             )
 
         elif msg["type"] == coordinator_api.RequestType.XMPP_COMPLETE.value:
-            job_id = int(msg["payload"]["job_id"])
-            worker_id = msg["payload"]["worker_id"]
+            job_id = decode_task_id(msg["payload"]["job_id"])
+            worker_id = decode_worker_id(msg["payload"]["worker_id"])
             result = msg["payload"]["xmpp_result"]
 
             ok = await self._handle_xmpp_result(
@@ -832,6 +697,7 @@ class CoordinatorRequestProcessor(RequestProcessor):
                 job_id,
                 result,
             )
+            self._try_poll_local_tasks()
             if ok:
                 return coordinator_api.mkv1response(
                     coordinator_api.ResponseType.OK,
@@ -881,19 +747,10 @@ class Coordinator:
             config.unprivileged.ratelimit,
         )
 
-    def _collect_tasks(self):
-        with model.session_scope(self._sessionmaker) as session:
-            ep_tasks = session.query(model.PendingScanTask.id_).filter(
-                model.PendingScanTask.type_ == model.TaskType.DISCOVER_ENDPOINTS
-            )
-            for task_id, in ep_tasks:
-                self._task_queue.push(self._processor._discover_endpoints,
-                                      task_id)
-
     async def run(self):
         worker = RestartingTask(self._task_queue.run, logger=logger)
         worker.start()
-        self._collect_tasks()
+        self._processor._try_poll_local_tasks()
         try:
             sock = self._zctx.socket(zmq.REP)
             try:
