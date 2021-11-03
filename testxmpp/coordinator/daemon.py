@@ -316,8 +316,8 @@ class CoordinatorRequestProcessor(RequestProcessor):
                     dep = model.ScanTaskDependency()
                     dep.parent_task = task
                     dep.child_task = selection_task
-                    session.add(task)
-                session.add(dep)
+                    session.add(dep)
+                session.add(task)
 
             for obj in db_objects:
                 session.add(obj)

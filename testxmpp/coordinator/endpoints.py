@@ -281,7 +281,6 @@ async def discover_endpoints(scan_id: int,
                 )
                 if endpoint is not None:
                     endpoint = get_or_add_altconnect_endpoint(endpoint)
-                    endpoint.xmppconnect_record = db_record
                     endpoint.host_meta_link = db_object
             if isinstance(db_object, model.HostMetaObject):
                 db_object.scan_id = scan_id
