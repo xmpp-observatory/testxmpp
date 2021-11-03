@@ -6,6 +6,7 @@ image_targets = $(patsubst docker/%.Dockerfile,%-image,$(images))
 repository = testxmpp
 
 PYTHON3 ?= python3
+DOCKER ?= docker
 SCSSC ?= $(PYTHON3) -m scss --load-path testxmpp/web/scss/
 
 all: build_css images
@@ -13,7 +14,7 @@ all: build_css images
 images: $(image_targets)
 
 $(image_targets): %-image: docker/%.Dockerfile
-	docker build -t $(repository)/$(patsubst %-image,%,$@):latest -f docker/$(patsubst %-image,%,$@).Dockerfile .
+	$(DOCKER) build -t $(repository)/$(patsubst %-image,%,$@):latest -f docker/$(patsubst %-image,%,$@).Dockerfile .
 
 build_css: $(generated_css_files)
 
