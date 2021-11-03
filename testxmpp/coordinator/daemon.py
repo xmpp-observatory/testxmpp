@@ -288,10 +288,12 @@ class CoordinatorRequestProcessor(RequestProcessor):
 
             # delete possibly pre-existing tasks
             session.query(model.ScanTask).filter(
-                model.ScanTask.type_ == model.TaskType.XMPP_PROBE
+                model.ScanTask.type_ == model.TaskType.XMPP_PROBE,
+                model.ScanTask.scan_id == scan_id,
             ).delete()
             session.query(model.ScanTask).filter(
-                model.ScanTask.type_ == model.TaskType.SELECT_ENDPOINTS
+                model.ScanTask.type_ == model.TaskType.SELECT_ENDPOINTS,
+                model.ScanTask.scan_id == scan_id,
             ).delete()
 
             # delete endpoints if there exist any
@@ -299,7 +301,7 @@ class CoordinatorRequestProcessor(RequestProcessor):
             # gracefully
             session.query(model.Endpoint).filter(
                 model.Endpoint.scan_id == task.scan_id,
-            )
+            ).delete()
 
             selection_task = model.ScanTask()
             selection_task.id_ = generate_task_id()
