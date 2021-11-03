@@ -8,11 +8,12 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-COPY setup.py /src/
-COPY MANIFEST.in /src/
+COPY setup.py MANIFEST.in alembic.ini /src/
 COPY testxmpp /src/testxmpp
-RUN cd /src && pip3 install '.[coordinator]'
+COPY alembic /src/alembic
+RUN cd /src && pip3 install '.[coordinator]' && pip3 install alembic && rm -rf /root/.cache
+COPY docker/coordinator.sh /coordinator.sh
 
 USER $uid
 
-ENTRYPOINT ["python3", "-m", "testxmpp.coordinator"]
+ENTRYPOINT ["/coordinator.sh"]

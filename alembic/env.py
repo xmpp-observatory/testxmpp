@@ -1,3 +1,5 @@
+import os
+
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config
@@ -8,6 +10,12 @@ from alembic import context
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
+try:
+    db_uri = os.environ["TESTXMPP_DB_URI"]
+except KeyError:
+    raise ValueError("TESTXMPP_DB_URI must be set")
+else:
+    config.set_main_option('sqlalchemy.url', db_uri)
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
