@@ -71,6 +71,10 @@ async def resolve(qname: bytes, rdtype,
                 **kwargs,
             )
         )
+    except dns.resolver.NoAnswer:
+        # treat as NXDOMAIN
+        if suppress_nxdomain:
+            return []
     except dns.resolver.NXDOMAIN:
         if suppress_nxdomain:
             return []
