@@ -2,13 +2,66 @@
 @import "_baseline.scss";
 
 
+/* standard elevations */
+
+.el-1, .box.el-1, div.form.el-1 {
+	box-shadow:
+		0 1px 3px rgba(0, 0, 0, 0.12),
+		0 1px 2px rgba(0, 0, 0, 0.24);
+}
+
+.el-2, .box.el-2, div.form.el-2 {
+	box-shadow:
+		0 3px 6px rgba(0, 0, 0, 0.15),
+		0 2px 4px rgba(0, 0, 0, 0.12);
+}
+
+.el-3, .box.el-3, div.form.el-3 {
+	box-shadow:
+		0 10px 20px rgba(0, 0, 0, 0.15),
+		0 3px 6px rgba(0, 0, 0, 0.10);
+}
+
+.el-4, .box.el-4, div.form.el-4 {
+	box-shadow:
+		0 15px 25px rgba(0, 0, 0, 0.15),
+		0 5px 10px rgba(0, 0, 0, 0.05);
+}
+
+.el-5, .box.el-5, div.form.el-5 {
+	box-shadow:
+		0 20px 40px rgba(0, 0, 0, 0.2);
+}
+
+
 body {
 	margin: 0;
 	margin-left: auto;
 	margin-right: auto;
 	max-width: 60rem;
 	padding: 0;
+	background-color: $gray-100;
+}
+
+main {
+	@extends .el-4;
 	background-color: $gray-900;
+	padding: $w-l1;
+	margin: $w-l1;
+}
+
+.card {
+	background-color: white;
+	padding: $w-l1;
+	margin: $w-l1 0;
+}
+
+.card > :first-child {
+	margin-top: 0;
+}
+
+.card > :last-child {
+	margin-bottom: 0;
 }
 
 
@@ -61,6 +114,24 @@ table th {
 	border-bottom: $w-s5 solid $primary-100;
 }
 
+table.transposed th {
+	border-bottom: none;
+	border-right: $w-s5 solid $primary-100;
+}
+
+table.long {
+	background: inherit;
+	thead {
+		position: sticky;
+		top: 0;
+		background: inherit;
+
+		th {
+			background-color: rgba(0, 0, 0, 0.05);
+		}
+	}
+}
+
 td.numeric {
 	text-align: right;
 }
@@ -88,6 +159,29 @@ dt {
 dd {
 	padding: $w-s1;
 	padding-right: 0;
+}
+
+/* certchain magic */
+
+ol.certchain, ol.xname {
+	list-style-type: none;
+	margin: 0;
+	padding: 0;
+
+	> {
+		margin: 0;
+		padding: 0;
+	}
+}
+
+dl.xname {
+	margin: 0;
+	padding: 0;
+}
+
+dl.slim dt, dl.slim dd {
+	padding-top: 0;
+	padding-bottom: 0;
 }
 
 /* main page cards and quick scan form */
@@ -148,6 +242,10 @@ ul.inline {
 	> li:first-child:before {
 		content: none;
 	}
+}
+
+.hardwrap {
+	line-break: anywhere;
 }
 
 /* a11y things */

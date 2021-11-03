@@ -10,7 +10,7 @@ from quart import Quart
 
 import flask_babel
 
-from .infra import db, babel
+from .infra import db, babel, setup_template_filters
 from .main import bp as bp_main
 
 
@@ -33,25 +33,6 @@ def create_app():
     babel.init_app(app)
 
     app.register_blueprint(bp_main)
-
-    @app.template_filter(name="format_timedelta")
-    def format_timedelta(dt, **kwargs):
-        return flask_babel.format_timedelta(dt, **kwargs)
-
-    @app.template_filter(name="decode_domain")
-    def decode_domain(d, **kwargs):
-        if isinstance(d, str):
-            return d
-        return d.decode("idna")
-
-    @app.template_filter(name="printable_bytes")
-    def printable_bytes(b, **kwargs):
-        if isinstance(b, str):
-            return b
-        return b.decode("utf-8", errors="replace")
-
-    @app.template_filter(name="hexdigest")
-    def hexdigest(bs, **kwargs):
-        return ":".join("{:02x}".format(b) for b in bs)
+    setup_template_filters(app)
 
     return app

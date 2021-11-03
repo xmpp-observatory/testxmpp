@@ -1,7 +1,8 @@
-{% extends "_base.html" %}
+{% extends "_page.html" %}
 {% from "_library.html" import connection_phase, badge, tls_mode_name %}
-{% block body %}
+{% block content %}
 <h1>{% trans %}Scan result #{{ scan_id }}{% endtrans %}</h1>
+<div class="card el-2">
 <dl>
 	<div class="di">
 		<dt>Domain</dt>
@@ -16,7 +17,9 @@
 		<dd>{{ scan_info.protocol.value }}</dd>
 	</div>
 </dl>
+</div>
 <h2>Endpoint discovery</h2>
+<div class="card el-2">
 <h3>SRV records</h3>
 {% if srv_records %}
 <table class="wide">
@@ -32,11 +35,11 @@
 	<tbody>
 {% for prio, weight, service, host, port in srv_records %}
 		<tr>
-			<td class="numeric">{{ prio }}</td>
-			<td class="numeric">{{ weight }}</td>
-			<td>{{ service }}</td>
-			<td>{{ host | decode_domain }}</td>
-			<td class="numeric">{{ port }}</td>
+			<td class="numeric"><code>{{ prio }}</code></td>
+			<td class="numeric"><code>{{ weight }}</code></td>
+			<td><code>{{ service }}</code></td>
+			<td><code>{{ host | decode_domain }}</code></td>
+			<td class="numeric"><code>{{ port }}</code></td>
 		</tr>
 {% endfor %}
 	</tbody>
@@ -44,6 +47,8 @@
 {% else %}
 <p>{% trans %}No valid records found.{% endtrans %}</p>
 {% endif %}
+</div>
+<div class="card el-2">
 <h3><tt>_xmppconnect</tt> TXT records</h3>
 {% if xmppconnect_records %}
 <table class="wide">
@@ -56,8 +61,8 @@
 	<tbody>
 {% for name, value in xmppconnect_records %}
 		<tr>
-			<td>{{ name | printable_bytes }}</td>
-			<td>{{ value | printable_bytes }}</td>
+			<td><code>{{ name | printable_bytes }}</code></td>
+			<td><code>{{ value | printable_bytes }}</code></td>
 		</tr>
 {% endfor %}
 	</tbody>
@@ -65,6 +70,8 @@
 {% else %}
 <p>{% trans %}No valid records found.{% endtrans %}</p>
 {% endif %}
+</div>
+<div class="card el-2">
 <h3><tt>host-meta</tt></h3>
 {% if host_meta_object_info %}
 <dl>
@@ -87,8 +94,8 @@
 	<tbody>
 {% for rel, href, formats in host_meta_links %}
 		<tr>
-			<td>{{ rel }}</td>
-			<td>{{ href }}</td>
+			<td><code>{{ rel }}</code></td>
+			<td><code>{{ href }}</code></td>
 			<td><ul class="inline">
 				{%- for format_ in formats -%}
 					<li>{{ format_.value }}</li>
@@ -104,7 +111,9 @@
 {% else %}
 <p>{% trans %}No valid host-meta objects found.{% endtrans %}</p>
 {% endif %}
+</div>
 <h2>Endpoints</h2>
+<div class="card el-2">
 <table class="wide">
 	<thead>
 		<tr>
@@ -120,7 +129,7 @@
 		<tr>
 			<td>{{ source }}</td>
 			<td>{{ transport }}</td>
-			<td>{{ uri }}</td>
+			<td><code>{{ uri }}</code></td>
 			<td>{{ mode }}</td>
 			<td>
 				{%- if in_progress -%}
@@ -137,8 +146,10 @@
 {% endfor %}
 	</tbody>
 </table>
+</div>
 
 <h2>Authentication</h2>
+<div class="card el-2">
 {% for phase, mechanisms in sasl_offerings.items() %}
 <h3>{{ phase }}</h3>
 {% if mechanisms %}
@@ -151,39 +162,64 @@
 <p>{% trans %}No SASL mechanisms offered.{% endtrans %}</p>
 {% endif %}
 {% endfor %}
+</div>
 
 <h2>TLS</h2>
-<p>The TLS scan was executed against {{ tls_scan_uri }}.</p>
+{% if not tls_scan_uri %}
+<div class="card el-2">
+	<p>The TLS scan has not been scheduled.</p>
+</div>
+{% else %}
+<p>The TLS scan was executed against <code>{{ tls_scan_uri }}</code>.</p>
 <h3>Versions</h3>
-<table>
-	<thead>
-		<tr>
-			<th>Version</th>
-			<th>Offered</th>
-		</tr>
-	</thead>
-	<tbody>
+<div class="card el-2">
+<table class="transposed">
+	<tr>
+		<th>Version</th>
 {% for label, score, offered in tls_offering_info %}
-		<tr>
-			<td>{{ label }}</td>
-			<td>{% if offered is none %}?{% else %}{{ 'yes' if offered else 'no'}}{% endif %}</td>
-		</tr>
+		<td>{{ label }}</td>
 {% endfor %}
-	</tbody>
+	</tr>
+	<tr>
+		<th>Offered</th>
+{% for label, score, offered in tls_offering_info %}
+		<td>{% if offered is none %}?{% else %}{{ 'yes' if offered else 'no'}}{% endif %}</td>
+{% endfor %}
+	</tr>
 </table>
-<h3>Certificate Chain</h3>
-<ol>
-{% for cert in cert_chain %}
+</div>
+
+{%- macro xname(nm, caller=None) %}
+<ol class="xname">
+{% for rdn in nm %}
 	<li>
+		<dl class="xname slim">
+			{% for type_, value in rdn.items() %}
+			<div class="di">
+				<dt>{{ type_ | oidname }}</dt>
+				<dd>{{ value }}</dd>
+			</div>
+			{% endfor %}
+		</dl>
+	</li>
+{% endfor %}
+</ol>
+{% endmacro -%}
+
+<h3>Certificate Chain</h3>
+{% if cert_chain %}
+<ol class="certchain">
+{% for cert in cert_chain %}
+	<li class="card el-2">
 		<dl>
 			<div class="di">
 				<dt>Subject</dt>
-				<dd>{{ cert.subject }}</dd>
+				<dd>{% call xname(cert.subject) %}{% endcall %}</dd>
 			</div>
-			<div class="di">
+			{# <div class="di">
 				<dt>Issuer</dt>
-				<dd>{{ cert.issuer }}</dd>
-			</div>
+				<dd>{% call xname(cert.issuer) %}{% endcall %}</dd>
+			</div> #}
 			<div class="di">
 				<dt>Valid from</dt>
 				<dd>{{ cert.not_before }}</dd>
@@ -192,21 +228,35 @@
 				<dt>Valid until</dt>
 				<dd>{{ cert.not_after }}</dd>
 			</div>
-			{% for algo in cert.fingerprints %}
 			<div class="di">
-				<dt>{{ algo }} Fingerprint</dt>
-				<dd>{{ cert.fingerprints[algo] | hexdigest }}</dd>
+				<dt>Fingerprints</dt>
+				<dd>
+					<dl class="slim">
+						{% for algo in cert.fingerprints %}
+						<div class="di">
+							<dt><code>{{ algo }}</code>
+							<dd><code class="hardwrap">{{ cert.fingerprints[algo] | hexdigest }}</code></dd>
+						</div>
+						{% endfor %}
+					</dl>
+				</dd>
 			</div>
-			{% endfor %}
 		</dl>
 	</li>
 {% endfor %}
 </ol>
+{% else %}
+<div class="card el-2">
+	<p>No certificate chain discovered.</p>
+</div>
+{% endif %}
 <h3>Ciphers</h3>
 <dl>
 	<dt>Cipher order</dt>
 	<dd>{% if server_cipher_order is none %}?{% elif server_cipher_order %}Server side{% else %}Client side{% endif %}</dd>
 </dl>
+<div class="card el-2">
+{% if ciphers %}
 <table class="wide{% if ciphers | length > 3 %} long{% endif %}">
 	<thead>
 		<tr>
@@ -223,4 +273,9 @@
 {% endfor %}
 	</tbody>
 </table>
+{% else %}
+<p>No cipher information available.</p>
+{% endif %}
+</div>
+{% endif %}
 {% endblock %}

@@ -244,6 +244,7 @@ async def scan_result(scan_id):
                 model.EndpointScanResult
             ).filter(
                 model.EndpointHTTP.scan_id == scan_id,
+                model.ScanTask.type_ == model.TaskType.XMPP_PROBE,
             ).order_by(
                 model.EndpointHTTP.endpoint_id.asc()
             ):
