@@ -68,7 +68,11 @@ async def scan_xmpp(domain: aioxmpp.JID,
     verifier = CustomNonVerifier()
 
     def context_factory(transport):
-        ssl_context = aioxmpp.security_layer.default_ssl_context()
+        ssl_context = OpenSSL.SSL.Context(OpenSSL.SSL.SSLv23_METHOD)
+        ssl_context.set_verify(
+            OpenSSL.SSL.VERIFY_PEER,
+            aioxmpp.security_layer.default_verify_callback,
+        )
         verifier.setup_context(ssl_context, transport)
         return ssl_context
 

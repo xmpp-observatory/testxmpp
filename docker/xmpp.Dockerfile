@@ -16,6 +16,8 @@ RUN cd /tmp && git clone --depth 1 --branch $aioxmpp_branch https://github.com/h
     cd / && \
     rm -rf /tmp/aioxmpp
 
+RUN sed -ri 's/SECLEVEL=\d+/SECLEVEL=0/;s/MinProtocol\s*=/MinProtocol = SSLv2/' /etc/ssl/openssl.cnf
+
 COPY setup.py /src/
 COPY MANIFEST.in /src/
 COPY testxmpp /src/testxmpp
