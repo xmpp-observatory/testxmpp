@@ -14,10 +14,13 @@ from .daemon import XMPPWorker
 class AppConfig:
     coordinator_uri = environ.var("tcp://localhost:5001")
     s2s_from = environ.var()
+    s2s_client_cert = environ.var()
+    s2s_client_key = environ.var()
 
 
-async def amain(coordinator_uri, s2s_from):
-    coordinator = XMPPWorker(coordinator_uri, s2s_from)
+async def amain(coordinator_uri, s2s_from, s2s_client_cert, s2s_client_key):
+    coordinator = XMPPWorker(coordinator_uri,
+                             s2s_from, s2s_client_cert, s2s_client_key)
     await coordinator.run()
 
 
@@ -55,4 +58,7 @@ def main():
     logging.getLogger("testxmpp").setLevel(verbosity_level)
 
     config = environ.to_config(AppConfig)
-    asyncio.run(amain(config.coordinator_uri, config.s2s_from))
+    asyncio.run(amain(config.coordinator_uri,
+                      config.s2s_from,
+                      config.s2s_client_cert,
+                      config.s2s_client_key))

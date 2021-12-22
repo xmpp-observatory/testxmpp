@@ -42,6 +42,8 @@ async def scan_xmpp(domain: aioxmpp.JID,
                     port: int,
                     protocol: str,
                     tls_mode: str,
+                    client_cert_path: typing.Optional[str],
+                    client_key_path: typing.Optional[str],
                     from_: typing.Optional[str],
                     negotiation_timeout: float):
     loop = asyncio.get_event_loop()
@@ -73,6 +75,10 @@ async def scan_xmpp(domain: aioxmpp.JID,
             OpenSSL.SSL.VERIFY_PEER,
             aioxmpp.security_layer.default_verify_callback,
         )
+        if client_cert_path:
+            ssl_context.use_certificate_chain_file(client_cert_path)
+        if client_key_path:
+            ssl_context.use_privatekey_file(client_key_path)
         verifier.setup_context(ssl_context, transport)
         return ssl_context
 
@@ -205,10 +211,13 @@ async def scan_features(domain: aioxmpp.JID,
                         port: int,
                         protocol: str,
                         tls_mode: str,
+                        client_cert_path: typing.Optional[str],
+                        client_key_path: typing.Optional[str],
                         from_: typing.Optional[str],
                         timeout: float):
     scan_result = await scan_xmpp(
-        domain, hostname, port, protocol, tls_mode, from_,
+        domain, hostname, port, protocol, tls_mode,
+        client_cert_path, client_key_path, from_,
         timeout,
     )
 
@@ -235,9 +244,14 @@ async def scan_features(domain: aioxmpp.JID,
 
 
 class XMPPWorker(testxmpp.common.Worker):
-    def __init__(self, coordinator_uri, s2s_from):
+    def __init__(self, coordinator_uri,
+                 s2s_from,
+                 s2s_client_cert,
+                 s2s_client_key):
         super().__init__(coordinator_uri, logging.getLogger(__name__))
         self._s2s_from = s2s_from
+        self._s2s_client_cert = s2s_client_cert
+        self._s2s_client_key = s2s_client_key
 
     def _mkjobrequest(self, worker_id):
         return coordinator_api.mkv1response(
@@ -261,6 +275,8 @@ class XMPPWorker(testxmpp.common.Worker):
                 job["port"],
                 job["protocol"],
                 job["tls_mode"],
+                None if job["protocol"] == "c2s" else self._s2s_client_cert,
+                None if job["protocol"] == "c2s" else self._s2s_client_key,
                 None if job["protocol"] == "c2s" else self._s2s_from,
                 10.0,
             )
