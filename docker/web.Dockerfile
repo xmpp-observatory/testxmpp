@@ -22,10 +22,10 @@ RUN cd /src && \
     pip install -r build-requirements.txt && \
     make build_css && \
     pip install '.[web]' && \
+    pip install hypercorn && \
     cd / && \
     rm -rf /src /root/.cache
 
 USER $uid
 
-ENV QUART_APP=testxmpp.web:create_app()
-ENTRYPOINT ["quart", "run", "-h", "::"]
+ENTRYPOINT ["hypercorn", "-b", "::", "testxmpp.web:create_app()"]
