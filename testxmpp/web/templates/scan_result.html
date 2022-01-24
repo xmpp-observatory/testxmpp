@@ -1,4 +1,5 @@
 {% extends "_page.html" %}
+{% block title %}{% trans %}Scan result #{{ scan_id }}{% endtrans %}{% endblock %}
 {% from "_library.html" import connection_phase, badge, tls_mode_name %}
 {% block content %}
 <h1>{% trans %}Scan result #{{ scan_id }}{% endtrans %}</h1>
