@@ -75,10 +75,15 @@ async def scan_xmpp(domain: aioxmpp.JID,
             OpenSSL.SSL.VERIFY_PEER,
             aioxmpp.security_layer.default_verify_callback,
         )
-        if client_cert_path:
+        if client_cert_path is not None:
             ssl_context.use_certificate_chain_file(client_cert_path)
-        if client_key_path:
+        if client_key_path is not None:
             ssl_context.use_privatekey_file(client_key_path)
+        if protocol == "s2s" and client_key_path is None:
+            logging.warn(
+                "running s2s tests without client certificate may"
+                " be inaccurate or cause false negatives"
+            )
         verifier.setup_context(ssl_context, transport)
         return ssl_context
 
@@ -244,10 +249,10 @@ async def scan_features(domain: aioxmpp.JID,
 
 
 class XMPPWorker(testxmpp.common.Worker):
-    def __init__(self, coordinator_uri,
-                 s2s_from,
-                 s2s_client_cert,
-                 s2s_client_key):
+    def __init__(self, coordinator_uri: str,
+                 s2s_from: str,
+                 s2s_client_cert: typing.Optional[str],
+                 s2s_client_key: typing.Optional[str]):
         super().__init__(coordinator_uri, logging.getLogger(__name__))
         self._s2s_from = s2s_from
         self._s2s_client_cert = s2s_client_cert

@@ -14,8 +14,8 @@ from .daemon import XMPPWorker
 class AppConfig:
     coordinator_uri = environ.var("tcp://localhost:5001")
     s2s_from = environ.var()
-    s2s_client_cert = environ.var()
-    s2s_client_key = environ.var()
+    s2s_client_cert = environ.var(default=None)
+    s2s_client_key = environ.var(default=None)
 
 
 async def amain(coordinator_uri, s2s_from, s2s_client_cert, s2s_client_key):
