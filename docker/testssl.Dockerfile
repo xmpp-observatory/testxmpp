@@ -10,7 +10,7 @@ RUN apt-get update && \
 
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends --no-install-suggests bsdmainutils dnsutils procps && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends --no-install-suggests bsdmainutils dnsutils procps wget && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -32,6 +32,9 @@ COPY setup.py /src/
 COPY MANIFEST.in /src/
 COPY testxmpp /src/testxmpp
 RUN cd /src && pip install '.[testssl]'
+
+RUN cd /tmp/ && wget -O openssl https://testssl.sh/openssl.Linux.x86_64.xmppserver && chmod +x /tmp/openssl
+ENV TESTXMPP_OPENSSL_PATH="/tmp/openssl"
 
 USER $uid
 
