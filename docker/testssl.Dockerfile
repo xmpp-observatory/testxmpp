@@ -35,6 +35,7 @@ RUN cd /src && pip install '.[testssl]'
 
 RUN cd /tmp/ && wget -O openssl https://testssl.sh/openssl.Linux.x86_64.xmppserver && chmod +x /tmp/openssl
 ENV TESTXMPP_OPENSSL_PATH="/tmp/openssl"
+ENV OPENSSL_CONF="/dev/null"
 
 USER $uid
 
