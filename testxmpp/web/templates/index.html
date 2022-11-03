@@ -15,11 +15,9 @@
 		<h2>{% trans %}Test a server{% endtrans %}</h2>
 		<form class="quickscan" method="POST" action="{{ url_for('main.queue_scan') }}">
 			<div><label for="domain">Domain</label><input type="text" name="domain" id="domain" placeholder="jabber.org"></div>
-			<div><label for="protocol">Protocol</label><select id="protocol" name="protocol">
-				<option label="Client-to-Server" value="c2s"/>
-				<option label="Server-to-Server" value="s2s"/>
-			</select></div>
-			<div><span></span><button type="submit">Start scan</button></div>
+			<div><label for="protocol">Start</label><button name="protocol" value="c2s" type="submit">Scan Client-to-Server</button>
+				or
+				<button name="protocol" value="s2s" type="submit">Scan Server-to-Server</button></div>
 		</form>
 	</div>
 	<div class="card">
