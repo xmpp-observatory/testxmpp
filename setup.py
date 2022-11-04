@@ -17,10 +17,10 @@ setup(
     ],
     extras_require={
         'web': [
-            "Quart~=0.13",
-            "Flask-SQLAlchemy~=2.4",
+            "Quart~=0.18",
+            "Flask-SQLAlchemy~=3.0",
             "Flask-Babel~=2.0",
-            "Flask-WTF~=0.14",
+            "Flask-WTF~=1.0",
         ],
         'xmpp': [
             "aioxmpp~=0.11",
