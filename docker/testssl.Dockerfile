@@ -14,7 +14,7 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-ARG testssl_branch=3.1dev
+ARG testssl_branch=3.2
 
 RUN cd /tmp && git clone --depth 1 --branch $testssl_branch https://github.com/drwetter/testssl.sh && \
     cd testssl.sh/ && git log --oneline | head -n1 && cd .. && \
