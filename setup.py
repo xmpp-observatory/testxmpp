@@ -17,10 +17,11 @@ setup(
     ],
     extras_require={
         'web': [
-            "Quart~=0.13",
-            "Flask-SQLAlchemy~=2.4",
-            "Flask-Babel~=2.0",
-            "Flask-WTF~=0.14",
+            "Quart~=0.18,<0.19",
+            "Flask-SQLAlchemy~=3.0",
+            "Flask-Babel~=2.0,<3.0",
+            "Flask-WTF~=1.1,<1.2",
+            "werkzeug~=2.2,<3",
         ],
         'xmpp': [
             "aioxmpp~=0.11",
@@ -29,6 +30,7 @@ setup(
         ],
         'coordinator': [
             "aioxmpp~=0.11",
+            "pytz",
         ],
     },
     include_package_data=True,

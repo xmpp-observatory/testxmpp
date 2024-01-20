@@ -13,6 +13,7 @@ ARG aioxmpp_branch=devel
 RUN cd /tmp && git clone --depth 1 --branch $aioxmpp_branch https://github.com/horazont/aioxmpp && \
     cd aioxmpp/ && \
     pip3 install . && \
+    pip3 install pytz && \
     cd / && \
     rm -rf /tmp/aioxmpp
 
