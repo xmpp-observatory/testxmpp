@@ -106,6 +106,7 @@ def unwrap_pem(blob: str) -> bytes:
     blob = blob[(startidx+len(HEAD)):]
     endidx = blob.find(FOOT)
     blob = blob[:endidx]
+    blob = blob.strip(r"\n")
     return base64.b64decode(blob)
 
 
