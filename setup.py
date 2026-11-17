@@ -5,7 +5,7 @@ setup(
     version="0.0.1",
     packages=find_packages(),
     install_requires=[
-        "PyZMQ~=19.0",
+        "PyZMQ>=25,<27",
         "schema~=0.7.2",
         "sqlalchemy~=1.3",
         "dnspython~=2.0",

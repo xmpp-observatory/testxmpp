@@ -7,7 +7,7 @@ repository = testxmpp
 
 PYTHON3 ?= python3
 DOCKER ?= docker
-SCSSC ?= $(PYTHON3) -m scss --load-path testxmpp/web/scss/
+SCSSC ?= $(PYTHON3) testxmpp/web/compile_scss.py
 
 all: build_css images
 
