@@ -53,21 +53,26 @@ def decode_worker_id(id_: str) -> bytes:
 
 
 class ExponentialBackOff:
-    def __init__(self, base=2, start=1, max_=120):
+    def __init__(self, base=2, start=1, max_=120, retry_limit=5):
         super().__init__()
         self.start = start
         self.max_ = max_
         self.base = base
+        self.retry_limit = retry_limit
         self._is_failing = False
         self._current = self.start
+        self._retry_count = 0
 
     def __iter__(self):
         return self
 
     def __next__(self):
+        if self._retry_count >= self.retry_limit:
+            raise StopIteration
         self._is_failing = True
         val = self._current
         self._current = min(self._current * self.base, self.max_)
+        self._retry_count += 1
         return val
 
     def next(self):
@@ -75,6 +80,7 @@ class ExponentialBackOff:
 
     def reset(self):
         self._current = self.start
+        self._retry_count = 0
 
     @property
     def failing(self):

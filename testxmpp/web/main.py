@@ -176,6 +176,16 @@ async def scan_result(scan_id):
     except sqlalchemy.orm.exc.NoResultFound:
         return abort(404)
 
+    unfinished_tasks = db.session.query(
+        model.ScanTask.id_
+    ).filter(
+        model.ScanTask.scan_id == scan_id,
+        model.ScanTask.state.in_((
+            model.TaskState.WAITING,
+            model.TaskState.IN_PROGRESS,
+        )),
+    ).first()
+
     srv_records = list(db.session.query(
         model.SRVRecord.priority,
         model.SRVRecord.weight,
@@ -400,6 +410,7 @@ async def scan_result(scan_id):
     return await render_template(
         "scan_result.html",
         scan_id=scan_id,
+        scan_completed=unfinished_tasks is None,
         scan_info={
             "domain": domain.decode("idna"),
             "protocol": protocol,

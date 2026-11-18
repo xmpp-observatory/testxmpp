@@ -101,10 +101,12 @@ def unwrap_pem(blob: str) -> bytes:
     HEAD = "-----BEGIN CERTIFICATE-----"
     FOOT = "-----END CERTIFICATE-----"
     startidx = blob.find(HEAD)
-    if startidx is None:
+    if startidx < 0:
         raise ValueError("input does not contain a certificate header")
     blob = blob[(startidx+len(HEAD)):]
     endidx = blob.find(FOOT)
+    if endidx < 0:
+        raise ValueError("input does not contain a certificate footer")
     blob = blob[:endidx]
     return base64.b64decode(blob)
 

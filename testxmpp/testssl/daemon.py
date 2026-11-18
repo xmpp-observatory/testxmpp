@@ -60,11 +60,9 @@ CIPHER_COLUMN_SEP_RE = re.compile(r"\s\s+")
 
 
 def unwrap_cert(cert: str) -> str:
-    return cert.replace(
-        " ", "\n",
-    ).replace(
-        "\nCERTIFICATE-", " CERTIFICATE-",
-    )
+    # testssl.sh's CSV output encodes PEM line breaks as the two characters
+    # "\\n". Decode those before passing the block to the PEM parser.
+    return cert.replace(r"\n", "\n")
 
 
 def interpret_tls_version(id_, severity, finding, id_match):

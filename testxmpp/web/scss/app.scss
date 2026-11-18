@@ -64,6 +64,54 @@ main {
 	margin-bottom: 0;
 }
 
+.scan-status {
+	display: flex;
+	align-items: center;
+	gap: $w-l1;
+	padding: $w-l1;
+	margin: $w-l1 0;
+	border-left: 0.4rem solid;
+	font-size: 1.1rem;
+}
+
+.scan-status p {
+	margin: $w-s2 0 0;
+	font-size: 0.95rem;
+}
+
+.scan-status-running {
+	color: white;
+	background-color: $primary-900;
+	border-color: $primary-500;
+}
+
+.scan-status-complete {
+	color: $success-100;
+	background-color: $success-900;
+	border-color: $success-500;
+}
+
+.scan-status-indicator {
+	display: inline-flex;
+	flex: 0 0 1.5rem;
+	width: 1.5rem;
+	height: 1.5rem;
+	align-items: center;
+	justify-content: center;
+	font-size: 1.3rem;
+}
+
+.scan-status-running .scan-status-indicator {
+	border: 0.2rem solid currentColor;
+	border-right-color: transparent;
+	border-radius: 50%;
+	animation: scan-status-spin 0.9s linear infinite;
+}
+
+@keyframes scan-status-spin {
+	to { transform: rotate(360deg); }
+}
+
 
 /* table foo */
 

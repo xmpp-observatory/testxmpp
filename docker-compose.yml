@@ -1,5 +1,3 @@
-version: '3'
-
 services:
   testssl:
     image: testxmpp/testssl:latest
@@ -16,7 +14,9 @@ services:
     build:
       context: .
       dockerfile: docker/coordinator.Dockerfile
-    user: "1000"
+    # Root in a rootless Docker container maps to the host user that owns the
+    # bind mount, so it can create the SQLite database in the project volume.
+    user: "0"
     network_mode: host
     command:
     - "-vvv"
