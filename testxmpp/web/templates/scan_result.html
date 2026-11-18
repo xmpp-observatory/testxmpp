@@ -2,7 +2,25 @@
 {% block title %}{% trans %}Scan result #{{ scan_id }}{% endtrans %}{% endblock %}
 {% from "_library.html" import connection_phase, badge, tls_mode_name %}
 {% block content %}
+<section id="scan-live" data-completed="{{ 'true' if scan_completed else 'false' }}">
 <h1>{% trans %}Scan result #{{ scan_id }}{% endtrans %}</h1>
+{% if scan_completed %}
+<div class="scan-status scan-status-complete" role="status" aria-live="polite">
+	<span class="scan-status-indicator" aria-hidden="true">✓</span>
+	<div>
+		<strong>{% trans %}Scan completed{% endtrans %}</strong>
+		<p>{% trans %}All scan tasks have finished.{% endtrans %}</p>
+	</div>
+</div>
+{% else %}
+	<div class="scan-status scan-status-running" role="status" aria-live="polite">
+		<span class="scan-status-indicator" aria-hidden="true"></span>
+		<div>
+			<strong>{% trans %}Scan in progress{% endtrans %}</strong>
+			<p>{% trans %}Results update automatically as they arrive.{% endtrans %}</p>
+		</div>
+	</div>
+{% endif %}
 <div class="card el-2">
 <dl>
 	<div class="di">
@@ -279,4 +297,47 @@
 {% endif %}
 </div>
 {% endif %}
+</section>
+<script>
+(() => {
+	const refreshInterval = 2000;
+	if (document.getElementById("scan-live").dataset.completed === "true") {
+		return;
+	}
+
+	let refreshing = false;
+	const refreshScan = async () => {
+		if (refreshing) {
+			return;
+		}
+		refreshing = true;
+		try {
+			const response = await fetch(window.location.href, {
+				cache: "no-store",
+				headers: { "X-Requested-With": "fetch" },
+			});
+			if (!response.ok) {
+				return;
+			}
+
+			const document_ = new DOMParser().parseFromString(
+				await response.text(), "text/html");
+			const updated = document_.getElementById("scan-live");
+			const current = document.getElementById("scan-live");
+			if (updated && current) {
+				current.replaceWith(updated);
+				if (updated.dataset.completed === "true") {
+					window.clearInterval(timer);
+				}
+			}
+		} catch (error) {
+			console.warn("Could not refresh scan results", error);
+		} finally {
+			refreshing = false;
+		}
+	};
+
+	const timer = window.setInterval(refreshScan, refreshInterval);
+})();
+</script>
 {% endblock %}
